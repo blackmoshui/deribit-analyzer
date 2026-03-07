@@ -50,78 +50,87 @@ impl PutCallParityAnalyzer {
 
         let discount = (-self.risk_free_rate * time_to_expiry).exp();
         let theoretical_diff = 1.0 - (strike / underlying) * discount;
-        let fee = 0.0003 * 2.0;
+        // Fee: 2 option legs × 0.03% + 1 futures leg × 0.05%
+        let fee = 0.0003 * 2.0 + 0.0005;
 
-        // Direction 1: Buy call + Sell put (synthetic long)
+        // Direction 1: Buy call + Sell put (synthetic long) + Sell underlying to hedge
+        // Synthetic long is cheap → buy it, sell actual underlying to lock in diff
         let market_diff_1 = call_ask - put_bid;
         let profit_1 = theoretical_diff - market_diff_1;
 
         if profit_1 > self.threshold + fee {
-            let profit_usd = profit_1 * underlying;
-            let cost_usd = market_diff_1 * underlying;
+            let profit_usd = (profit_1 - fee) * underlying;
+            // Total capital: option net cost + futures margin
+            // Option net: market_diff_1 * S (negative = received), futures: sell at S
+            let total_cost_usd = (market_diff_1.abs() + 1.0) * underlying;
 
             info!(
                 call = %call_inst.instrument_name,
                 put = %put_inst.instrument_name,
                 profit_usd = profit_usd,
-                "PCP: Buy call + Sell put"
+                "PCP: Buy call + Sell put + Sell underlying"
             );
 
             return Some(Opportunity {
                 strategy_type: "put_call_parity".to_string(),
                 description: format!(
-                    "Synthetic long underpriced vs underlying | Strike {} | Expiry {} days",
+                    "Synthetic long underpriced | K={} | {} days",
                     strike,
                     (time_to_expiry * 365.25) as i32
                 ),
                 legs: vec![
                     TradeLeg::buy(1, &call_inst.instrument_name, call_ask, 1.0),
                     TradeLeg::sell(2, &put_inst.instrument_name, put_bid, 1.0),
+                    TradeLeg::sell(3, "BTC-PERPETUAL", underlying, 1.0).with_usd(),
                 ],
                 expected_profit: profit_usd,
-                total_cost: cost_usd,
+                total_cost: total_cost_usd,
                 risk_level: RiskLevel::Low,
                 instruments: vec![
                     call_inst.instrument_name.clone(),
                     put_inst.instrument_name.clone(),
+                    "BTC-PERPETUAL".to_string(),
                 ],
                 detected_at: chrono::Utc::now().timestamp(),
                 expiry_timestamp: Some(expiration),
             });
         }
 
-        // Direction 2: Sell call + Buy put (synthetic short)
+        // Direction 2: Sell call + Buy put (synthetic short) + Buy underlying to hedge
+        // Synthetic short is expensive → sell it, buy actual underlying to lock in diff
         let market_diff_2 = call_bid - put_ask;
         let profit_2 = market_diff_2 - theoretical_diff;
 
         if profit_2 > self.threshold + fee {
-            let profit_usd = profit_2 * underlying;
-            let revenue_usd = market_diff_2 * underlying;
+            let profit_usd = (profit_2 - fee) * underlying;
+            let total_cost_usd = (market_diff_2.abs() + 1.0) * underlying;
 
             info!(
                 call = %call_inst.instrument_name,
                 put = %put_inst.instrument_name,
                 profit_usd = profit_usd,
-                "PCP: Sell call + Buy put"
+                "PCP: Sell call + Buy put + Buy underlying"
             );
 
             return Some(Opportunity {
                 strategy_type: "put_call_parity".to_string(),
                 description: format!(
-                    "Synthetic short overpriced vs underlying | Strike {} | Expiry {} days",
+                    "Synthetic short overpriced | K={} | {} days",
                     strike,
                     (time_to_expiry * 365.25) as i32
                 ),
                 legs: vec![
                     TradeLeg::sell(1, &call_inst.instrument_name, call_bid, 1.0),
                     TradeLeg::buy(2, &put_inst.instrument_name, put_ask, 1.0),
+                    TradeLeg::buy(3, "BTC-PERPETUAL", underlying, 1.0).with_usd(),
                 ],
                 expected_profit: profit_usd,
-                total_cost: revenue_usd.abs(),
+                total_cost: total_cost_usd,
                 risk_level: RiskLevel::Low,
                 instruments: vec![
                     call_inst.instrument_name.clone(),
                     put_inst.instrument_name.clone(),
+                    "BTC-PERPETUAL".to_string(),
                 ],
                 detected_at: chrono::Utc::now().timestamp(),
                 expiry_timestamp: Some(expiration),

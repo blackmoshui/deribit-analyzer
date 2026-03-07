@@ -89,7 +89,11 @@ impl Opportunity {
     /// Uses detected_at as baseline for stable calculation.
     /// Returns None for sub-day durations (annualizing is meaningless).
     pub fn annualized_return(&self) -> Option<f64> {
-        if self.total_cost <= 0.0 || self.expected_profit <= 0.0 {
+        if self.expected_profit <= 0.0 {
+            return None;
+        }
+        let cost = self.total_cost.abs();
+        if cost < 1.0 {
             return None;
         }
         let expiry_ms = self.expiry_timestamp?;
@@ -98,7 +102,7 @@ impl Opportunity {
         if days < 1.0 {
             return None;
         }
-        let roi = self.expected_profit / self.total_cost;
+        let roi = self.expected_profit / cost;
         Some(roi * 365.0 / days)
     }
 }

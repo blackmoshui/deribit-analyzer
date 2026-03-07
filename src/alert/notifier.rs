@@ -68,8 +68,8 @@ impl Notifier {
         }
         if opp.expected_profit > 0.0 {
             println!("  Expected Profit: ${:.2}", opp.expected_profit);
-            if opp.total_cost > 0.0 {
-                let roi = (opp.expected_profit / opp.total_cost) * 100.0;
+            if opp.total_cost.abs() > 1.0 {
+                let roi = (opp.expected_profit / opp.total_cost.abs()) * 100.0;
                 println!("  ROI:             {:.2}%", roi);
             }
         }

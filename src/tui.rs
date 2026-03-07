@@ -34,6 +34,7 @@ enum Filter {
 enum SortBy {
     Profit,
     Time,
+    Apy,
 }
 
 struct App {
@@ -44,6 +45,8 @@ struct App {
     filter: Filter,
     sort_by: SortBy,
     table_state: TableState,
+    /// Track which opportunity is selected by key (stable across re-sorts)
+    selected_key: Option<String>,
     should_quit: bool,
     connected: bool,
     instrument_count: usize,
@@ -59,6 +62,7 @@ impl App {
             filter: Filter::All,
             sort_by: SortBy::Profit,
             table_state: TableState::default(),
+            selected_key: None,
             should_quit: false,
             connected: false,
             instrument_count: 0,
@@ -87,6 +91,13 @@ impl App {
     }
 
     fn update_filtered(&mut self) {
+        // Remember current selection by key
+        if let Some(sel) = self.table_state.selected() {
+            if let Some(&idx) = self.filtered.get(sel) {
+                self.selected_key = Some(Self::opp_key(&self.opportunities[idx]));
+            }
+        }
+
         let now = chrono::Utc::now().timestamp();
         let stale_threshold = 60; // hide opportunities not refreshed in 60s
 
@@ -95,7 +106,6 @@ impl App {
             .iter()
             .enumerate()
             .filter(|(_, opp)| {
-                // Filter out stale opportunities
                 if now - opp.detected_at > stale_threshold {
                     return false;
                 }
@@ -119,6 +129,20 @@ impl App {
             SortBy::Time => self.filtered.sort_by(|a, b| {
                 opps[*b].detected_at.cmp(&opps[*a].detected_at)
             }),
+            SortBy::Apy => self.filtered.sort_by(|a, b| {
+                let apy_a = opps[*a].annualized_return().unwrap_or(0.0);
+                let apy_b = opps[*b].annualized_return().unwrap_or(0.0);
+                apy_b.partial_cmp(&apy_a).unwrap_or(std::cmp::Ordering::Equal)
+            }),
+        }
+
+        // Restore selection by key
+        if let Some(ref key) = self.selected_key {
+            if let Some(pos) = self.filtered.iter().position(|&idx| {
+                Self::opp_key(&self.opportunities[idx]) == *key
+            }) {
+                self.table_state.select(Some(pos));
+            }
         }
     }
 
@@ -253,7 +277,8 @@ fn handle_key(app: &mut App, key: event::KeyEvent) {
             }
             KeyCode::Char('s') => {
                 app.sort_by = match app.sort_by {
-                    SortBy::Profit => SortBy::Time,
+                    SortBy::Profit => SortBy::Apy,
+                    SortBy::Apy => SortBy::Time,
                     SortBy::Time => SortBy::Profit,
                 };
                 app.update_filtered();
@@ -339,7 +364,10 @@ fn draw_list(f: &mut Frame, app: &mut App) {
             "Profit{}",
             if matches!(app.sort_by, SortBy::Profit) { " \u{2193}" } else { "" }
         )),
-        Cell::from("APY"),
+        Cell::from(format!(
+            "APY{}",
+            if matches!(app.sort_by, SortBy::Apy) { " \u{2193}" } else { "" }
+        )),
         Cell::from("Risk"),
         Cell::from(format!(
             "Time{}",
@@ -521,8 +549,8 @@ fn draw_detail(f: &mut Frame, app: &mut App) {
                     .add_modifier(Modifier::BOLD),
             ),
         ]));
-        if opp.total_cost > 0.0 {
-            let roi = (opp.expected_profit / opp.total_cost) * 100.0;
+        if opp.total_cost.abs() > 1.0 {
+            let roi = (opp.expected_profit / opp.total_cost.abs()) * 100.0;
             info_lines.push(Line::from(format!("  ROI:             {:.2}%", roi)));
         }
         if let Some(apy) = opp.annualized_return() {

@@ -67,7 +67,9 @@ impl Storage {
                 instruments TEXT,
                 legs TEXT,
                 detected_at INTEGER,
-                expired_at INTEGER
+                expired_at INTEGER,
+                expiry_timestamp INTEGER,
+                total_cost REAL
             );
 
             CREATE INDEX IF NOT EXISTS idx_tickers_instrument ON tickers(instrument_name);
@@ -77,6 +79,14 @@ impl Storage {
             ",
         )
         .context("Failed to create tables")?;
+
+        // Migrations: add columns if missing
+        if conn.prepare("SELECT expiry_timestamp FROM opportunities LIMIT 0").is_err() {
+            let _ = conn.execute_batch("ALTER TABLE opportunities ADD COLUMN expiry_timestamp INTEGER;");
+        }
+        if conn.prepare("SELECT total_cost FROM opportunities LIMIT 0").is_err() {
+            let _ = conn.execute_batch("ALTER TABLE opportunities ADD COLUMN total_cost REAL;");
+        }
 
         info!("Database initialized");
         Ok(())
@@ -134,7 +144,7 @@ impl Storage {
     pub async fn load_opportunities_after(&self, after_id: i64) -> Result<Vec<(i64, Opportunity)>> {
         let conn = self.conn.lock().await;
         let mut stmt = conn.prepare(
-            "SELECT id, strategy_type, description, expected_profit, risk_level, instruments, legs, detected_at
+            "SELECT id, strategy_type, description, expected_profit, risk_level, instruments, legs, detected_at, expiry_timestamp, total_cost
              FROM opportunities WHERE id > ?1 ORDER BY id",
         )?;
         let mut results = Vec::new();
@@ -148,10 +158,12 @@ impl Storage {
                 row.get::<_, String>(5)?,
                 row.get::<_, String>(6)?,
                 row.get::<_, i64>(7)?,
+                row.get::<_, Option<i64>>(8)?,
+                row.get::<_, Option<f64>>(9)?,
             ))
         })?;
         for row in rows {
-            let (id, strategy_type, description, expected_profit, risk_str, instruments_json, legs_json, detected_at) = row?;
+            let (id, strategy_type, description, expected_profit, risk_str, instruments_json, legs_json, detected_at, expiry_timestamp, total_cost) = row?;
             let risk_level = match risk_str.as_str() {
                 "low" => RiskLevel::Low,
                 "medium" => RiskLevel::Medium,
@@ -164,10 +176,11 @@ impl Storage {
                 description,
                 legs,
                 expected_profit,
-                total_cost: 0.0,
+                total_cost: total_cost.unwrap_or(0.0),
                 risk_level,
                 instruments,
                 detected_at,
+                expiry_timestamp,
             }));
         }
         Ok(results)
@@ -186,8 +199,8 @@ impl Storage {
         let legs_json = serde_json::to_string(&opp.legs)?;
 
         conn.execute(
-            "INSERT INTO opportunities (strategy_type, description, expected_profit, risk_level, instruments, detected_at, legs)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO opportunities (strategy_type, description, expected_profit, risk_level, instruments, detected_at, legs, expiry_timestamp, total_cost)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             rusqlite::params![
                 opp.strategy_type,
                 opp.description,
@@ -196,6 +209,8 @@ impl Storage {
                 instruments_json,
                 opp.detected_at,
                 legs_json,
+                opp.expiry_timestamp,
+                opp.total_cost,
             ],
         )?;
         Ok(())

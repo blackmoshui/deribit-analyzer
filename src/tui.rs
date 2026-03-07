@@ -319,6 +319,7 @@ fn draw_list(f: &mut Frame, app: &mut App) {
             "Profit{}",
             if matches!(app.sort_by, SortBy::Profit) { " \u{2193}" } else { "" }
         )),
+        Cell::from("APY"),
         Cell::from("Risk"),
         Cell::from(format!(
             "Time{}",
@@ -341,6 +342,10 @@ fn draw_list(f: &mut Frame, app: &mut App) {
             } else {
                 "\u{2014}".to_string()
             };
+            let apy_str = match opp.annualized_return() {
+                Some(apy) => format!("{:.1}%", apy * 100.0),
+                None => "\u{2014}".to_string(),
+            };
             let time_str = chrono::DateTime::from_timestamp(opp.detected_at, 0)
                 .map(|dt| dt.format("%H:%M:%S").to_string())
                 .unwrap_or_default();
@@ -352,8 +357,9 @@ fn draw_list(f: &mut Frame, app: &mut App) {
             };
             Row::new(vec![
                 Cell::from(opp.strategy_type.clone()),
-                Cell::from(truncate(&opp.description, 50)),
+                Cell::from(truncate(&opp.description, 45)),
                 Cell::from(profit_str),
+                Cell::from(apy_str),
                 Cell::from(opp.risk_level.to_string()).style(risk_style),
                 Cell::from(time_str),
             ])
@@ -363,9 +369,10 @@ fn draw_list(f: &mut Frame, app: &mut App) {
     let table = Table::new(
         rows,
         [
-            Constraint::Length(18),
-            Constraint::Min(30),
+            Constraint::Length(16),
+            Constraint::Min(25),
             Constraint::Length(12),
+            Constraint::Length(10),
             Constraint::Length(8),
             Constraint::Length(10),
         ],
@@ -498,11 +505,32 @@ fn draw_detail(f: &mut Frame, app: &mut App) {
             let roi = (opp.expected_profit / opp.total_cost) * 100.0;
             info_lines.push(Line::from(format!("  ROI:             {:.2}%", roi)));
         }
+        if let Some(apy) = opp.annualized_return() {
+            info_lines.push(Line::from(vec![
+                Span::raw("  Annualized (APY): "),
+                Span::styled(
+                    format!("{:.1}%", apy * 100.0),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]));
+        }
     }
     let time_str = chrono::DateTime::from_timestamp(opp.detected_at, 0)
         .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
         .unwrap_or_else(|| "unknown".to_string());
     info_lines.push(Line::from(format!("  Detected:        {}", time_str)));
+    if let Some(expiry_ms) = opp.expiry_timestamp {
+        let expiry_str = chrono::DateTime::from_timestamp_millis(expiry_ms)
+            .map(|dt| dt.format("%Y-%m-%d").to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        let days_left = (expiry_ms - chrono::Utc::now().timestamp_millis()) as f64 / 86_400_000.0;
+        info_lines.push(Line::from(format!(
+            "  Expiry:          {} ({:.0} days)",
+            expiry_str, days_left
+        )));
+    }
     info_lines.push(Line::from(format!(
         "  Instruments:     {}",
         opp.instruments.join(", ")

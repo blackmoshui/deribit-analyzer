@@ -150,6 +150,7 @@ impl BoxSpreadAnalyzer {
                     put_k1.instrument_name.clone(),
                 ],
                 detected_at: chrono::Utc::now().timestamp(),
+                expiry_timestamp: Some(expiration),
             });
         }
 
@@ -191,6 +192,7 @@ impl BoxSpreadAnalyzer {
                     put_k1.instrument_name.clone(),
                 ],
                 detected_at: chrono::Utc::now().timestamp(),
+                expiry_timestamp: Some(expiration),
             });
         }
 

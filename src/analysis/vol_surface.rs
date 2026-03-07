@@ -85,6 +85,7 @@ impl VolSurfaceAnalyzer {
                         risk_level: RiskLevel::Medium,
                         instruments: vec![window[0].2.clone(), window[1].2.clone()],
                         detected_at: chrono::Utc::now().timestamp(),
+                        expiry_timestamp: Some(*expiration),
                     });
                 }
             }
@@ -138,6 +139,7 @@ impl VolSurfaceAnalyzer {
                             window[2].2.clone(),
                         ],
                         detected_at: chrono::Utc::now().timestamp(),
+                        expiry_timestamp: Some(*expiration),
                     });
                 }
             }

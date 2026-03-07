@@ -117,6 +117,7 @@ impl CalendarArbAnalyzer {
                             risk_level: RiskLevel::Low,
                             instruments: vec![name_near.clone(), name_far.clone()],
                             detected_at: chrono::Utc::now().timestamp(),
+                            expiry_timestamp: Some(pair[1].0),
                         });
                     }
                 }

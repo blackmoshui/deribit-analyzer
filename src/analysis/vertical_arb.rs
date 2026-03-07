@@ -118,6 +118,7 @@ impl VerticalArbAnalyzer {
                             risk_level: RiskLevel::Low,
                             instruments: vec![name1.clone(), name2.clone()],
                             detected_at: chrono::Utc::now().timestamp(),
+                            expiry_timestamp: Some(*expiration),
                         });
                     }
                 }
@@ -155,6 +156,7 @@ impl VerticalArbAnalyzer {
                             risk_level: RiskLevel::Low,
                             instruments: vec![name1.clone(), name2.clone()],
                             detected_at: chrono::Utc::now().timestamp(),
+                            expiry_timestamp: Some(*expiration),
                         });
                     }
                 }
@@ -199,6 +201,7 @@ impl VerticalArbAnalyzer {
                             risk_level: RiskLevel::Low,
                             instruments: vec![n1.clone(), n2.clone(), n3.clone()],
                             detected_at: chrono::Utc::now().timestamp(),
+                            expiry_timestamp: Some(*expiration),
                         });
                     }
                 }
@@ -238,6 +241,7 @@ impl VerticalArbAnalyzer {
                             risk_level: RiskLevel::Low,
                             instruments: vec![n1.clone(), n2.clone(), n3.clone()],
                             detected_at: chrono::Utc::now().timestamp(),
+                            expiry_timestamp: Some(*expiration),
                         });
                     }
                 }

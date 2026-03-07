@@ -109,11 +109,15 @@ async fn main() -> Result<()> {
         }
     });
 
+    // Dedicated channel for opportunity saving (avoids broadcast lag from ticker flood)
+    let (opp_save_tx, mut opp_save_rx) = tokio::sync::mpsc::unbounded_channel::<deribit::analysis::opportunity::Opportunity>();
+
     // Analysis task
     let analysis_registry = registry.clone();
     let analysis_ticker = ticker_cache.clone();
     let analysis_event_bus = event_bus.clone();
     let alert_threshold = config.alert_threshold;
+    let analysis_opp_tx = opp_save_tx.clone();
     tokio::spawn(async move {
         let pcp = PutCallParityAnalyzer::new(alert_threshold);
         let box_spread = BoxSpreadAnalyzer::new(10.0);
@@ -135,32 +139,39 @@ async fn main() -> Result<()> {
 
             let mut arb_count = 0;
             for opp in pcp.scan_all(reg, tc).await {
+                let _ = analysis_opp_tx.send(opp.clone());
                 analysis_event_bus.publish(Event::OpportunityFound(opp));
                 arb_count += 1;
             }
             for opp in box_spread.scan(reg, tc).await {
+                let _ = analysis_opp_tx.send(opp.clone());
                 analysis_event_bus.publish(Event::OpportunityFound(opp));
                 arb_count += 1;
             }
             for opp in conversion.scan(reg, tc).await {
+                let _ = analysis_opp_tx.send(opp.clone());
                 analysis_event_bus.publish(Event::OpportunityFound(opp));
                 arb_count += 1;
             }
             for opp in vertical.scan(reg, tc).await {
+                let _ = analysis_opp_tx.send(opp.clone());
                 analysis_event_bus.publish(Event::OpportunityFound(opp));
                 arb_count += 1;
             }
             for opp in calendar_arb.scan(reg, tc).await {
+                let _ = analysis_opp_tx.send(opp.clone());
                 analysis_event_bus.publish(Event::OpportunityFound(opp));
                 arb_count += 1;
             }
 
             let mut signal_count = 0;
             for opp in vol_surface.scan(reg, tc).await {
+                let _ = analysis_opp_tx.send(opp.clone());
                 analysis_event_bus.publish(Event::OpportunityFound(opp));
                 signal_count += 1;
             }
             for opp in calendar_spread.scan(reg, tc).await {
+                let _ = analysis_opp_tx.send(opp.clone());
                 analysis_event_bus.publish(Event::OpportunityFound(opp));
                 signal_count += 1;
             }
@@ -175,23 +186,12 @@ async fn main() -> Result<()> {
         }
     });
 
-    // Opportunity saver
+    // Opportunity saver (dedicated mpsc channel, no broadcast lag)
     let storage_opp = storage.clone();
-    let opp_bus = event_bus.clone();
     tokio::spawn(async move {
-        let mut rx = opp_bus.subscribe();
-        loop {
-            match rx.recv().await {
-                Ok(Event::OpportunityFound(opp)) => {
-                    if let Err(e) = storage_opp.save_opportunity(&opp).await {
-                        warn!(error = %e, "Failed to save opportunity");
-                    }
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    warn!(skipped = n, "Opportunity saver lagged");
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                _ => {}
+        while let Some(opp) = opp_save_rx.recv().await {
+            if let Err(e) = storage_opp.save_opportunity(&opp).await {
+                warn!(error = %e, "Failed to save opportunity");
             }
         }
     });

@@ -38,8 +38,14 @@ impl CalendarSpreadAnalyzer {
         for inst in &all_instruments {
             if let Some(ticker) = ticker_cache.get(&inst.instrument_name).await {
                 if ticker.mark_iv > 0.0 {
-                    let bid = ticker.best_bid_price.unwrap_or(0.0);
-                    let ask = ticker.best_ask_price.unwrap_or(0.0);
+                    let bid = match ticker.best_bid_price {
+                        Some(b) if b > 0.0 => b,
+                        _ => continue,
+                    };
+                    let ask = match ticker.best_ask_price {
+                        Some(a) if a > 0.0 => a,
+                        _ => continue,
+                    };
                     let key = (inst.strike as u64, inst.option_type.to_string());
                     groups
                         .entry(key)

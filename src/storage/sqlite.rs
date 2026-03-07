@@ -74,7 +74,7 @@ impl Storage {
 
             CREATE INDEX IF NOT EXISTS idx_tickers_instrument ON tickers(instrument_name);
             CREATE INDEX IF NOT EXISTS idx_tickers_timestamp ON tickers(timestamp);
-            CREATE INDEX IF NOT EXISTS idx_opportunities_type ON opportunities(strategy_type);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_opportunities_key ON opportunities(strategy_type, instruments);
             CREATE INDEX IF NOT EXISTS idx_opportunities_detected ON opportunities(detected_at);
             ",
         )
@@ -87,6 +87,17 @@ impl Storage {
         if conn.prepare("SELECT total_cost FROM opportunities LIMIT 0").is_err() {
             let _ = conn.execute_batch("ALTER TABLE opportunities ADD COLUMN total_cost REAL;");
         }
+        // Migration: replace old non-unique index with unique index
+        let _ = conn.execute_batch("DROP INDEX IF EXISTS idx_opportunities_type;");
+        // Deduplicate existing rows before creating unique index
+        let _ = conn.execute_batch(
+            "DELETE FROM opportunities WHERE id NOT IN (
+                SELECT MAX(id) FROM opportunities GROUP BY strategy_type, instruments
+            );"
+        );
+        let _ = conn.execute_batch(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_opportunities_key ON opportunities(strategy_type, instruments);"
+        );
 
         info!("Database initialized");
         Ok(())
@@ -195,11 +206,14 @@ impl Storage {
 
     pub async fn save_opportunity(&self, opp: &Opportunity) -> Result<()> {
         let conn = self.conn.lock().await;
-        let instruments_json = serde_json::to_string(&opp.instruments)?;
+        // Sort instruments for consistent unique key
+        let mut sorted_instruments = opp.instruments.clone();
+        sorted_instruments.sort();
+        let instruments_json = serde_json::to_string(&sorted_instruments)?;
         let legs_json = serde_json::to_string(&opp.legs)?;
 
         conn.execute(
-            "INSERT INTO opportunities (strategy_type, description, expected_profit, risk_level, instruments, detected_at, legs, expiry_timestamp, total_cost)
+            "INSERT OR REPLACE INTO opportunities (strategy_type, description, expected_profit, risk_level, instruments, detected_at, legs, expiry_timestamp, total_cost)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             rusqlite::params![
                 opp.strategy_type,

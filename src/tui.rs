@@ -87,14 +87,23 @@ impl App {
     }
 
     fn update_filtered(&mut self) {
+        let now = chrono::Utc::now().timestamp();
+        let stale_threshold = 60; // hide opportunities not refreshed in 60s
+
         self.filtered = self
             .opportunities
             .iter()
             .enumerate()
-            .filter(|(_, opp)| match self.filter {
-                Filter::All => true,
-                Filter::Arbitrage => is_arb(&opp.strategy_type),
-                Filter::Signal => !is_arb(&opp.strategy_type),
+            .filter(|(_, opp)| {
+                // Filter out stale opportunities
+                if now - opp.detected_at > stale_threshold {
+                    return false;
+                }
+                match self.filter {
+                    Filter::All => true,
+                    Filter::Arbitrage => is_arb(&opp.strategy_type),
+                    Filter::Signal => !is_arb(&opp.strategy_type),
+                }
             })
             .map(|(i, _)| i)
             .collect();
@@ -182,7 +191,15 @@ async fn run_inner(opp_rx: &mut mpsc::UnboundedReceiver<TuiEvent>) -> Result<()>
                     None => break,
                 }
             }
-            _ = tick.tick() => {}
+            _ = tick.tick() => {
+                app.update_filtered();
+                // Clamp selection to valid range
+                if let Some(sel) = app.table_state.selected() {
+                    if sel >= app.filtered.len() {
+                        app.table_state.select(if app.filtered.is_empty() { None } else { Some(app.filtered.len() - 1) });
+                    }
+                }
+            }
         }
 
         if app.should_quit {
@@ -272,7 +289,7 @@ fn draw_list(f: &mut Frame, app: &mut App) {
         format!(
             "Connected | {} instruments | {} opportunities",
             app.instrument_count,
-            app.opportunities.len()
+            app.filtered.len()
         )
     } else {
         "Connecting...".to_string()
@@ -286,15 +303,18 @@ fn draw_list(f: &mut Frame, app: &mut App) {
         .alignment(Alignment::Center);
     f.render_widget(header, chunks[0]);
 
-    // Tabs
-    let arb_count = app
+    // Tabs - count only active (non-stale) opportunities
+    let now = chrono::Utc::now().timestamp();
+    let stale_threshold = 60;
+    let active: Vec<&Opportunity> = app
         .opportunities
         .iter()
-        .filter(|o| is_arb(&o.strategy_type))
-        .count();
-    let sig_count = app.opportunities.len() - arb_count;
+        .filter(|o| now - o.detected_at <= stale_threshold)
+        .collect();
+    let arb_count = active.iter().filter(|o| is_arb(&o.strategy_type)).count();
+    let sig_count = active.len() - arb_count;
     let tabs = Tabs::new(vec![
-        format!("All [{}]", app.opportunities.len()),
+        format!("All [{}]", active.len()),
         format!("Arbitrage [{}]", arb_count),
         format!("Signals [{}]", sig_count),
     ])

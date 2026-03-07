@@ -94,14 +94,14 @@ impl BoxSpreadAnalyzer {
         let tp_k1 = ticker_cache.get(&put_k1.instrument_name).await?;
         let tp_k2 = ticker_cache.get(&put_k2.instrument_name).await?;
 
-        let c1_bid = tc_k1.best_bid_price?;
-        let c1_ask = tc_k1.best_ask_price?;
-        let c2_bid = tc_k2.best_bid_price?;
-        let c2_ask = tc_k2.best_ask_price?;
-        let p1_bid = tp_k1.best_bid_price?;
-        let p1_ask = tp_k1.best_ask_price?;
-        let p2_bid = tp_k2.best_bid_price?;
-        let p2_ask = tp_k2.best_ask_price?;
+        let c1_bid = tc_k1.best_bid_price.filter(|&p| p > 0.0)?;
+        let c1_ask = tc_k1.best_ask_price.filter(|&p| p > 0.0)?;
+        let c2_bid = tc_k2.best_bid_price.filter(|&p| p > 0.0)?;
+        let c2_ask = tc_k2.best_ask_price.filter(|&p| p > 0.0)?;
+        let p1_bid = tp_k1.best_bid_price.filter(|&p| p > 0.0)?;
+        let p1_ask = tp_k1.best_ask_price.filter(|&p| p > 0.0)?;
+        let p2_bid = tp_k2.best_bid_price.filter(|&p| p > 0.0)?;
+        let p2_ask = tp_k2.best_ask_price.filter(|&p| p > 0.0)?;
 
         let underlying = tc_k1.underlying_price;
         if underlying <= 0.0 {

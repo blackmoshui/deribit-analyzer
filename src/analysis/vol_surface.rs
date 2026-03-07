@@ -31,12 +31,20 @@ impl VolSurfaceAnalyzer {
                 if inst.expiration_timestamp == *expiration && inst.option_type == OptionType::Call {
                     if let Some(ticker) = ticker_cache.get(&inst.instrument_name).await {
                         if ticker.mark_iv > 0.0 {
+                            let bid = match ticker.best_bid_price {
+                                Some(b) if b > 0.0 => b,
+                                _ => continue,
+                            };
+                            let ask = match ticker.best_ask_price {
+                                Some(a) if a > 0.0 => a,
+                                _ => continue,
+                            };
                             iv_points.push((
                                 inst.strike,
                                 ticker.mark_iv,
                                 inst.instrument_name.clone(),
-                                ticker.best_bid_price.unwrap_or(0.0),
-                                ticker.best_ask_price.unwrap_or(0.0),
+                                bid,
+                                ask,
                             ));
                         }
                     }

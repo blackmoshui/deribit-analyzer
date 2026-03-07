@@ -84,10 +84,10 @@ impl ConversionAnalyzer {
         let call_ticker = ticker_cache.get(&call_inst.instrument_name).await?;
         let put_ticker = ticker_cache.get(&put_inst.instrument_name).await?;
 
-        let c_bid = call_ticker.best_bid_price?;
-        let c_ask = call_ticker.best_ask_price?;
-        let p_bid = put_ticker.best_bid_price?;
-        let p_ask = put_ticker.best_ask_price?;
+        let c_bid = call_ticker.best_bid_price.filter(|&p| p > 0.0)?;
+        let c_ask = call_ticker.best_ask_price.filter(|&p| p > 0.0)?;
+        let p_bid = put_ticker.best_bid_price.filter(|&p| p > 0.0)?;
+        let p_ask = put_ticker.best_ask_price.filter(|&p| p > 0.0)?;
 
         let s = call_ticker.underlying_price;
         if s <= 0.0 {

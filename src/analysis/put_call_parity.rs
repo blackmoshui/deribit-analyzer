@@ -32,10 +32,10 @@ impl PutCallParityAnalyzer {
         let call_ticker = ticker_cache.get(&call_inst.instrument_name).await?;
         let put_ticker = ticker_cache.get(&put_inst.instrument_name).await?;
 
-        let call_bid = call_ticker.best_bid_price?;
-        let call_ask = call_ticker.best_ask_price?;
-        let put_bid = put_ticker.best_bid_price?;
-        let put_ask = put_ticker.best_ask_price?;
+        let call_bid = call_ticker.best_bid_price.filter(|&p| p > 0.0)?;
+        let call_ask = call_ticker.best_ask_price.filter(|&p| p > 0.0)?;
+        let put_bid = put_ticker.best_bid_price.filter(|&p| p > 0.0)?;
+        let put_ask = put_ticker.best_ask_price.filter(|&p| p > 0.0)?;
 
         let underlying = call_ticker.underlying_price;
         if underlying <= 0.0 {

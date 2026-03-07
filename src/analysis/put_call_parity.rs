@@ -4,20 +4,22 @@ use crate::analysis::opportunity::{Opportunity, RiskLevel, TradeLeg};
 use crate::market::instruments::InstrumentRegistry;
 use crate::market::ticker::TickerCache;
 
-/// Put-Call Parity Arbitrage
-/// C - P = S - K × e^(-rT)
-/// Deribit prices in BTC: C - P = 1 - (K/S) × e^(-rT)
+/// Put-Call Parity Arbitrage (no interest rate assumption)
+///
+/// Deribit BTC-settled: C - P = 1 - K/S (at r=0)
+///
+/// Only triggers when the options market genuinely misprices C vs P
+/// relative to spot. Does NOT assume funding income from perpetual.
+///
+/// For true risk-free arb: use same-expiry futures as hedge instead
+/// of perpetual (TODO: subscribe to BTC quarterly futures).
 pub struct PutCallParityAnalyzer {
     threshold: f64,
-    risk_free_rate: f64,
 }
 
 impl PutCallParityAnalyzer {
     pub fn new(threshold: f64) -> Self {
-        PutCallParityAnalyzer {
-            threshold,
-            risk_free_rate: 0.05,
-        }
+        PutCallParityAnalyzer { threshold }
     }
 
     pub async fn check_pair(
@@ -48,35 +50,40 @@ impl PutCallParityAnalyzer {
             return None;
         }
 
-        let discount = (-self.risk_free_rate * time_to_expiry).exp();
-        let theoretical_diff = 1.0 - (strike / underlying) * discount;
+        // r=0: no funding assumption. Only genuine options mispricing triggers.
+        // theoretical_diff = 1 - K/S (what C - P should equal at r=0)
+        let theoretical_diff = 1.0 - strike / underlying;
+
         // Fee: 2 option legs × 0.03% + 1 futures leg × 0.05%
         let fee = 0.0003 * 2.0 + 0.0005;
 
-        // Direction 1: Buy call + Sell put (synthetic long) + Sell underlying to hedge
-        // Synthetic long is cheap → buy it, sell actual underlying to lock in diff
+        // Direction 1: Buy call + Sell put (synthetic long) + Sell underlying
+        // Profitable when: call is cheap relative to put (synthetic long underpriced)
         let market_diff_1 = call_ask - put_bid;
         let profit_1 = theoretical_diff - market_diff_1;
 
         if profit_1 > self.threshold + fee {
             let profit_usd = (profit_1 - fee) * underlying;
-            // Total capital: option net cost + futures margin
-            // Option net: market_diff_1 * S (negative = received), futures: sell at S
             let total_cost_usd = (market_diff_1.abs() + 1.0) * underlying;
 
             info!(
                 call = %call_inst.instrument_name,
                 put = %put_inst.instrument_name,
+                profit_btc = profit_1 - fee,
                 profit_usd = profit_usd,
-                "PCP: Buy call + Sell put + Sell underlying"
+                theoretical = theoretical_diff,
+                market = market_diff_1,
+                "PCP: Call cheap vs Put → Buy C + Sell P + Sell underlying"
             );
 
             return Some(Opportunity {
                 strategy_type: "put_call_parity".to_string(),
                 description: format!(
-                    "Synthetic long underpriced | K={} | {} days",
+                    "Call underpriced vs Put | K={} | {:.0} days | C-P={:.4} vs theo {:.4}",
                     strike,
-                    (time_to_expiry * 365.25) as i32
+                    time_to_expiry * 365.25,
+                    market_diff_1,
+                    theoretical_diff,
                 ),
                 legs: vec![
                     TradeLeg::buy(1, &call_inst.instrument_name, call_ask, 1.0),
@@ -96,8 +103,8 @@ impl PutCallParityAnalyzer {
             });
         }
 
-        // Direction 2: Sell call + Buy put (synthetic short) + Buy underlying to hedge
-        // Synthetic short is expensive → sell it, buy actual underlying to lock in diff
+        // Direction 2: Sell call + Buy put (synthetic short) + Buy underlying
+        // Profitable when: call is expensive relative to put (synthetic short overpriced)
         let market_diff_2 = call_bid - put_ask;
         let profit_2 = market_diff_2 - theoretical_diff;
 
@@ -108,16 +115,21 @@ impl PutCallParityAnalyzer {
             info!(
                 call = %call_inst.instrument_name,
                 put = %put_inst.instrument_name,
+                profit_btc = profit_2 - fee,
                 profit_usd = profit_usd,
-                "PCP: Sell call + Buy put + Buy underlying"
+                theoretical = theoretical_diff,
+                market = market_diff_2,
+                "PCP: Call expensive vs Put → Sell C + Buy P + Buy underlying"
             );
 
             return Some(Opportunity {
                 strategy_type: "put_call_parity".to_string(),
                 description: format!(
-                    "Synthetic short overpriced | K={} | {} days",
+                    "Call overpriced vs Put | K={} | {:.0} days | C-P={:.4} vs theo {:.4}",
                     strike,
-                    (time_to_expiry * 365.25) as i32
+                    time_to_expiry * 365.25,
+                    market_diff_2,
+                    theoretical_diff,
                 ),
                 legs: vec![
                     TradeLeg::sell(1, &call_inst.instrument_name, call_bid, 1.0),

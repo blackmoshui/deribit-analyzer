@@ -4,25 +4,25 @@ use crate::analysis::opportunity::{Opportunity, RiskLevel, TradeLeg};
 use crate::market::instruments::InstrumentRegistry;
 use crate::market::ticker::TickerCache;
 
-/// Box Spread Arbitrage
+/// Box Spread Arbitrage (no interest rate assumption)
 ///
 /// Long Box: Buy C(K1) + Sell C(K2) + Buy P(K2) + Sell P(K1)
 /// Guaranteed USD payoff at expiry = K2 - K1 (regardless of BTC price)
 ///
-/// If cost(USD) < (K2-K1) × discount → profit
-/// If cost(USD) > (K2-K1) × discount → do Short Box instead
+/// If cost(USD) < K2-K1 → profit (at r=0)
+/// If cost(USD) > K2-K1 → do Short Box instead
+///
+/// Box spread is pure options (no futures), so no funding risk.
+/// r=0 is conservative for long box (makes value look bigger → harder
+/// for cost to beat) and aggressive for short box (revenue must beat
+/// undiscounted value). Both are acceptable for screening.
 pub struct BoxSpreadAnalyzer {
-    risk_free_rate: f64,
-    /// Minimum profit in USD to trigger alert
     min_profit_usd: f64,
 }
 
 impl BoxSpreadAnalyzer {
     pub fn new(min_profit_usd: f64) -> Self {
-        BoxSpreadAnalyzer {
-            risk_free_rate: 0.05,
-            min_profit_usd,
-        }
+        BoxSpreadAnalyzer { min_profit_usd }
     }
 
     pub async fn scan(
@@ -46,8 +46,6 @@ impl BoxSpreadAnalyzer {
                 continue;
             }
 
-            let discount = (-self.risk_free_rate * time_to_expiry).exp();
-
             // Check all strike pairs (K1 < K2)
             for i in 0..strikes.len() {
                 for j in (i + 1)..strikes.len() {
@@ -62,7 +60,6 @@ impl BoxSpreadAnalyzer {
                             k2,
                             *expiration,
                             time_to_expiry,
-                            discount,
                         )
                         .await
                     {
@@ -83,7 +80,6 @@ impl BoxSpreadAnalyzer {
         k2: f64,
         expiration: i64,
         time_to_expiry: f64,
-        discount: f64,
     ) -> Option<Opportunity> {
         // Need C(K1), C(K2), P(K1), P(K2)
         let (call_k1, put_k1) = registry.find_pair(k1, expiration).await?;
@@ -108,8 +104,8 @@ impl BoxSpreadAnalyzer {
             return None;
         }
 
-        // Theoretical box value (USD) = (K2-K1) × discount
-        let box_value = (k2 - k1) * discount;
+        // Theoretical box value (USD) = K2-K1 (r=0, no discounting)
+        let box_value = k2 - k1;
         // Fee: 4 legs × 0.03% taker
         let fee_btc = 0.0003 * 4.0;
         let fee_usd = fee_btc * underlying;

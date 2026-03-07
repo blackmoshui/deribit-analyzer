@@ -4,32 +4,27 @@ use crate::analysis::opportunity::{Opportunity, RiskLevel, TradeLeg};
 use crate::market::instruments::InstrumentRegistry;
 use crate::market::ticker::TickerCache;
 
-/// Conversion / Reversal Arbitrage
+/// Conversion / Reversal Arbitrage (r=0, no interest rate assumption)
 ///
 /// Conversion: Buy underlying + Buy Put(K) + Sell Call(K)
 ///   - At expiry, USD value = K regardless of BTC price
-///   - Cost(USD) = S + P_ask×S - C_bid×S = S×(1 + P_ask - C_bid)
-///   - If cost < K × discount → profit
+///   - Cost(USD) = S × (1 + P_ask - C_bid)
+///   - If cost < K → profit (at r=0)
 ///
 /// Reversal: Sell underlying + Sell Put(K) + Buy Call(K)
-///   - Mirror of conversion
-///   - Revenue(USD) = S×(C_bid - P_ask + 1)... wait, reversed
-///   - Revenue(USD) = S×(1 - C_ask + P_bid)... needs negative underlying
-///   - If revenue > K × discount → profit
+///   - Revenue(USD) = S × (1 - C_ask + P_bid)
+///   - If revenue > K → profit (at r=0)
 ///
-/// Note: Uses underlying_price (index) as approximation.
-/// For production, should use same-expiry futures price.
+/// Note: r=0 means conversion requires K > cost (no discounting),
+/// which is LESS conservative than positive r (makes it easier to
+/// trigger). For production, use same-expiry futures as forward price.
 pub struct ConversionAnalyzer {
-    risk_free_rate: f64,
     min_profit_usd: f64,
 }
 
 impl ConversionAnalyzer {
     pub fn new(min_profit_usd: f64) -> Self {
-        ConversionAnalyzer {
-            risk_free_rate: 0.05,
-            min_profit_usd,
-        }
+        ConversionAnalyzer { min_profit_usd }
     }
 
     pub async fn scan(
@@ -48,8 +43,6 @@ impl ConversionAnalyzer {
             if time_to_expiry <= 0.0 {
                 continue;
             }
-            let discount = (-self.risk_free_rate * time_to_expiry).exp();
-
             for strike in &strikes {
                 if let Some(opp) = self
                     .check_strike(
@@ -58,7 +51,6 @@ impl ConversionAnalyzer {
                         *strike,
                         *expiration,
                         time_to_expiry,
-                        discount,
                     )
                     .await
                 {
@@ -77,7 +69,6 @@ impl ConversionAnalyzer {
         strike: f64,
         expiration: i64,
         time_to_expiry: f64,
-        discount: f64,
     ) -> Option<Opportunity> {
         let (call_inst, put_inst) = registry.find_pair(strike, expiration).await?;
 
@@ -102,25 +93,25 @@ impl ConversionAnalyzer {
         // Buy 1 BTC (or long futures), Buy Put(K), Sell Call(K)
         // Cost in BTC: 1 + P_ask - C_bid
         // Cost in USD: S × (1 + P_ask - C_bid)
-        // Guaranteed payoff at expiry: K (USD)
+        // Guaranteed payoff at expiry: K (USD), no discounting (r=0)
         let conv_cost_btc = 1.0 + p_ask - c_bid;
         let conv_cost_usd = s * conv_cost_btc;
-        let conv_payoff_pv = strike * discount;
-        let conv_profit = conv_payoff_pv - conv_cost_usd - fee_usd;
+        let conv_payoff = strike; // r=0: no present-value discount
+        let conv_profit = conv_payoff - conv_cost_usd - fee_usd;
 
         if conv_profit > self.min_profit_usd {
             info!(
                 strike = strike,
                 cost = conv_cost_usd,
-                payoff_pv = conv_payoff_pv,
+                payoff = conv_payoff,
                 profit = conv_profit,
                 "Conversion arbitrage"
             );
             return Some(Opportunity {
                 strategy_type: "conversion".to_string(),
                 description: format!(
-                    "Conversion at K={} | Cost ${:.2} → Payoff ${:.2} (PV) | {} days",
-                    strike, conv_cost_usd, conv_payoff_pv, days
+                    "Conversion at K={} | Cost ${:.2} → Payoff ${:.2} | {} days",
+                    strike, conv_cost_usd, conv_payoff, days
                 ),
                 legs: vec![
                     TradeLeg::buy(1, "BTC-PERPETUAL", s, 1.0).with_usd(),
@@ -142,27 +133,27 @@ impl ConversionAnalyzer {
 
         // === Reversal ===
         // Sell 1 BTC (or short futures), Sell Put(K), Buy Call(K)
-        // Revenue in BTC: 1 + P_bid - C_ask  (but reversed sign)
-        // Revenue in USD: S × (1 - C_ask + P_bid)
-        // Guaranteed liability at expiry: K (USD)
+        // Revenue in BTC: 1 + P_bid - C_ask
+        // Revenue in USD: S × (1 + P_bid - C_ask)
+        // Guaranteed liability at expiry: K (USD), no discounting (r=0)
         let rev_revenue_btc = 1.0 + p_bid - c_ask;
         let rev_revenue_usd = s * rev_revenue_btc;
-        let rev_liability_pv = strike * discount;
-        let rev_profit = rev_revenue_usd - rev_liability_pv - fee_usd;
+        let rev_liability = strike; // r=0: no present-value discount
+        let rev_profit = rev_revenue_usd - rev_liability - fee_usd;
 
         if rev_profit > self.min_profit_usd {
             info!(
                 strike = strike,
                 revenue = rev_revenue_usd,
-                liability_pv = rev_liability_pv,
+                liability = rev_liability,
                 profit = rev_profit,
                 "Reversal arbitrage"
             );
             return Some(Opportunity {
                 strategy_type: "reversal".to_string(),
                 description: format!(
-                    "Reversal at K={} | Revenue ${:.2} → Liability ${:.2} (PV) | {} days",
-                    strike, rev_revenue_usd, rev_liability_pv, days
+                    "Reversal at K={} | Revenue ${:.2} → Liability ${:.2} | {} days",
+                    strike, rev_revenue_usd, rev_liability, days
                 ),
                 legs: vec![
                     TradeLeg::sell(1, "BTC-PERPETUAL", s, 1.0).with_usd(),

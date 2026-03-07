@@ -136,20 +136,19 @@ impl VolSurfaceAnalyzer {
                 continue;
             }
 
+            // Deribit greeks.vega is in USD per 1% IV change
             let convergence = 0.5;
             let middle_vega = window[1].vega.abs();
             let wing_vega = (window[0].vega.abs() + window[2].vega.abs()) / 2.0;
             // Middle converges to interpolated; wings barely move
-            let est_profit_btc =
-                (middle_vega * 2.0 * deviation.abs() * convergence)
-                    .max(0.0);
+            let est_profit_usd =
+                (middle_vega * 2.0 * deviation.abs() * convergence).max(0.0);
             // Subtract wing exposure (they move slightly opposite)
-            let wing_loss_btc = wing_vega * 2.0 * deviation.abs() * convergence * 0.3;
-            let net_profit_btc = (est_profit_btc - wing_loss_btc).max(0.0);
+            let wing_loss_usd = wing_vega * 2.0 * deviation.abs() * convergence * 0.3;
+            let net_profit_usd = (est_profit_usd - wing_loss_usd).max(0.0);
             let underlying = window[1].underlying;
-            let est_profit_usd = net_profit_btc * underlying;
-            let fee_usd = underlying * 0.0003 * 4.0; // 4 option legs (buy 2 middle, sell 2 wings)
-            let profit_usd = (est_profit_usd - fee_usd).max(0.0);
+            let fee_usd = underlying * 0.0003 * 4.0; // 4 option legs
+            let profit_usd = (net_profit_usd - fee_usd).max(0.0);
 
             let (legs, desc, net_cost_btc) = if deviation < 0.0 {
                 let cost = window[1].ask * 2.0 - window[0].bid - window[2].bid;
@@ -176,6 +175,12 @@ impl VolSurfaceAnalyzer {
             };
 
             let total_cost_usd = net_cost_btc * underlying;
+            // Sanity cap: profit can't exceed 5x the cost
+            let profit_usd = if total_cost_usd > 1.0 {
+                profit_usd.min(total_cost_usd * 5.0)
+            } else {
+                profit_usd.min(underlying * 0.01) // cap at 1% of underlying
+            };
 
             info!(
                 strike = window[1].strike,
@@ -266,18 +271,24 @@ impl VolSurfaceAnalyzer {
             let high = &window[high_idx];
             let low = &window[low_idx];
 
+            // Deribit greeks.vega is in USD per 1% IV change
             let convergence = 0.5;
             let iv_move = step.abs() * convergence;
-            let est_profit_btc = (high.vega.abs() + low.vega.abs()) * iv_move;
+            let est_profit_usd = (high.vega.abs() + low.vega.abs()) * iv_move;
             let underlying = high.underlying.max(low.underlying);
-            let est_profit_usd = est_profit_btc * underlying;
 
             let premium_received = high.bid;
             let premium_paid = low.ask;
             let net_cost_btc = (premium_paid - premium_received).abs();
             let total_cost_usd = net_cost_btc * underlying;
             let fee_usd = underlying * 0.0003 * 2.0;
-            let profit_usd = (est_profit_usd - fee_usd).max(0.0);
+            let mut profit_usd = (est_profit_usd - fee_usd).max(0.0);
+            // Sanity cap: profit can't exceed 5x the cost
+            if total_cost_usd > 1.0 {
+                profit_usd = profit_usd.min(total_cost_usd * 5.0);
+            } else {
+                profit_usd = profit_usd.min(underlying * 0.01);
+            }
 
             info!(
                 iv_step = step,

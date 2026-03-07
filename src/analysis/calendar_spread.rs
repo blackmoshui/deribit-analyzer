@@ -77,13 +77,12 @@ impl CalendarSpreadAnalyzer {
                 let iv_diff = iv_near - iv_far;
 
                 if iv_diff.abs() > self.min_iv_diff {
-                    // Estimate profit: sell high IV, buy low IV
-                    // Profit if IV converges 50%
+                    // Deribit greeks.vega is in USD per 1% IV change
+                    // Estimate profit if IV converges 50%
                     let convergence = 0.5;
                     let iv_move = iv_diff.abs() * convergence;
-                    let est_profit_btc = (vega_near.abs() + vega_far.abs()) * iv_move;
+                    let est_profit_usd = (vega_near.abs() + vega_far.abs()) * iv_move;
                     let underlying = underlying_near.max(underlying_far);
-                    let est_profit_usd = est_profit_btc * underlying;
                     let fee_usd = underlying * 0.0003 * 2.0;
                     let profit_usd = (est_profit_usd - fee_usd).max(0.0);
 
@@ -112,6 +111,12 @@ impl CalendarSpreadAnalyzer {
                     };
 
                     let total_cost_usd = net_cost_btc * underlying;
+                    // Sanity cap: profit can't exceed 5x the cost
+                    let profit_usd = if total_cost_usd > 1.0 {
+                        profit_usd.min(total_cost_usd * 5.0)
+                    } else {
+                        profit_usd.min(underlying * 0.01)
+                    };
 
                     info!(
                         strike = strike,

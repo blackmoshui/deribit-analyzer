@@ -40,8 +40,7 @@ impl BoxSpreadAnalyzer {
             }
 
             let now = chrono::Utc::now().timestamp_millis();
-            let time_to_expiry =
-                (expiration - now) as f64 / (365.25 * 24.0 * 3600.0 * 1000.0);
+            let time_to_expiry = (expiration - now) as f64 / (365.25 * 24.0 * 3600.0 * 1000.0);
             if time_to_expiry <= 0.0 {
                 continue;
             }
@@ -53,14 +52,7 @@ impl BoxSpreadAnalyzer {
                     let k2 = strikes[j];
 
                     if let Some(opp) = self
-                        .check_box(
-                            registry,
-                            ticker_cache,
-                            k1,
-                            k2,
-                            *expiration,
-                            time_to_expiry,
-                        )
+                        .check_box(registry, ticker_cache, k1, k2, *expiration, time_to_expiry)
                         .await
                     {
                         opportunities.push(opp);
@@ -118,7 +110,8 @@ impl BoxSpreadAnalyzer {
         if long_profit > self.min_profit_usd {
             let days = (time_to_expiry * 365.25) as i32;
             info!(
-                k1 = k1, k2 = k2,
+                k1 = k1,
+                k2 = k2,
                 cost = long_cost_usd,
                 box_value = box_value,
                 profit = long_profit,
@@ -160,7 +153,8 @@ impl BoxSpreadAnalyzer {
         if short_profit > self.min_profit_usd {
             let days = (time_to_expiry * 365.25) as i32;
             info!(
-                k1 = k1, k2 = k2,
+                k1 = k1,
+                k2 = k2,
                 revenue = short_revenue_usd,
                 box_value = box_value,
                 profit = short_profit,

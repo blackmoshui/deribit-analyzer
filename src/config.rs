@@ -21,8 +21,7 @@ impl Config {
         };
 
         Ok(Config {
-            client_id: std::env::var("DERIBIT_CLIENT_ID")
-                .context("DERIBIT_CLIENT_ID not set")?,
+            client_id: std::env::var("DERIBIT_CLIENT_ID").context("DERIBIT_CLIENT_ID not set")?,
             client_secret: std::env::var("DERIBIT_CLIENT_SECRET")
                 .context("DERIBIT_CLIENT_SECRET not set")?,
             ws_url,
@@ -31,8 +30,7 @@ impl Config {
                 .parse()
                 .context("Invalid ALERT_THRESHOLD")?,
             heartbeat_interval: 30,
-            db_path: std::env::var("DB_PATH")
-                .unwrap_or_else(|_| "deribit.db".to_string()),
+            db_path: std::env::var("DB_PATH").unwrap_or_else(|_| "deribit.db".to_string()),
         })
     }
 }

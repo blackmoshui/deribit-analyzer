@@ -9,10 +9,7 @@ pub struct Subscriber;
 
 impl Subscriber {
     /// Subscribe to ticker channels for given instruments
-    pub async fn subscribe_tickers(
-        client: &WsClient,
-        instrument_names: &[String],
-    ) -> Result<()> {
+    pub async fn subscribe_tickers(client: &WsClient, instrument_names: &[String]) -> Result<()> {
         // Subscribe in batches to respect rate limits
         let batch_size = 20;
         for chunk in instrument_names.chunks(batch_size) {
@@ -25,10 +22,7 @@ impl Subscriber {
                 .send_request("public/subscribe", json!({"channels": channels}))
                 .await?;
 
-            info!(
-                count = chunk.len(),
-                "Subscribed to ticker channels"
-            );
+            info!(count = chunk.len(), "Subscribed to ticker channels");
         }
         Ok(())
     }
@@ -49,19 +43,13 @@ impl Subscriber {
                 .send_request("public/subscribe", json!({"channels": channels}))
                 .await?;
 
-            info!(
-                count = chunk.len(),
-                "Subscribed to orderbook channels"
-            );
+            info!(count = chunk.len(), "Subscribed to orderbook channels");
         }
         Ok(())
     }
 
     /// Subscribe to trade channels
-    pub async fn subscribe_trades(
-        client: &WsClient,
-        instrument_names: &[String],
-    ) -> Result<()> {
+    pub async fn subscribe_trades(client: &WsClient, instrument_names: &[String]) -> Result<()> {
         let batch_size = 20;
         for chunk in instrument_names.chunks(batch_size) {
             let channels: Vec<String> = chunk
@@ -73,10 +61,7 @@ impl Subscriber {
                 .send_request("public/subscribe", json!({"channels": channels}))
                 .await?;
 
-            info!(
-                count = chunk.len(),
-                "Subscribed to trade channels"
-            );
+            info!(count = chunk.len(), "Subscribed to trade channels");
         }
         Ok(())
     }

@@ -141,8 +141,7 @@ impl VolSurfaceAnalyzer {
             let middle_vega = window[1].vega.abs();
             let wing_vega = (window[0].vega.abs() + window[2].vega.abs()) / 2.0;
             // Middle converges to interpolated; wings barely move
-            let est_profit_usd =
-                (middle_vega * 2.0 * deviation.abs() * convergence).max(0.0);
+            let est_profit_usd = (middle_vega * 2.0 * deviation.abs() * convergence).max(0.0);
             // Subtract wing exposure (they move slightly opposite)
             let wing_loss_usd = wing_vega * 2.0 * deviation.abs() * convergence * 0.3;
             let net_profit_usd = (est_profit_usd - wing_loss_usd).max(0.0);
@@ -252,9 +251,16 @@ impl VolSurfaceAnalyzer {
                 let left_dev = if i >= 1 {
                     let interp = (points[i - 1].iv + points[i + 1].iv) / 2.0;
                     let dev = points[i].iv - interp;
-                    let devs: Vec<f64> = points.windows(3).map(|w| w[1].iv - (w[0].iv + w[2].iv) / 2.0).collect();
+                    let devs: Vec<f64> = points
+                        .windows(3)
+                        .map(|w| w[1].iv - (w[0].iv + w[2].iv) / 2.0)
+                        .collect();
                     let (m, s) = mean_std(&devs);
-                    if s > 0.5 { ((dev - m) / s).abs() > self.butterfly_z_threshold } else { false }
+                    if s > 0.5 {
+                        ((dev - m) / s).abs() > self.butterfly_z_threshold
+                    } else {
+                        false
+                    }
                 } else {
                     false
                 };

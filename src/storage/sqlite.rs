@@ -81,10 +81,17 @@ impl Storage {
         .context("Failed to create tables")?;
 
         // Migrations: add columns if missing
-        if conn.prepare("SELECT expiry_timestamp FROM opportunities LIMIT 0").is_err() {
-            let _ = conn.execute_batch("ALTER TABLE opportunities ADD COLUMN expiry_timestamp INTEGER;");
+        if conn
+            .prepare("SELECT expiry_timestamp FROM opportunities LIMIT 0")
+            .is_err()
+        {
+            let _ = conn
+                .execute_batch("ALTER TABLE opportunities ADD COLUMN expiry_timestamp INTEGER;");
         }
-        if conn.prepare("SELECT total_cost FROM opportunities LIMIT 0").is_err() {
+        if conn
+            .prepare("SELECT total_cost FROM opportunities LIMIT 0")
+            .is_err()
+        {
             let _ = conn.execute_batch("ALTER TABLE opportunities ADD COLUMN total_cost REAL;");
         }
         // Migration: replace old non-unique index with unique index
@@ -93,7 +100,7 @@ impl Storage {
         let _ = conn.execute_batch(
             "DELETE FROM opportunities WHERE id NOT IN (
                 SELECT MAX(id) FROM opportunities GROUP BY strategy_type, instruments
-            );"
+            );",
         );
         let _ = conn.execute_batch(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_opportunities_key ON opportunities(strategy_type, instruments);"
@@ -122,11 +129,7 @@ impl Storage {
         Ok(())
     }
 
-    pub async fn save_ticker(
-        &self,
-        instrument_name: &str,
-        data: &TickerData,
-    ) -> Result<()> {
+    pub async fn save_ticker(&self, instrument_name: &str, data: &TickerData) -> Result<()> {
         let conn = self.conn.lock().await;
 
         conn.execute(
@@ -174,25 +177,40 @@ impl Storage {
             ))
         })?;
         for row in rows {
-            let (id, strategy_type, description, expected_profit, risk_str, instruments_json, legs_json, detected_at, expiry_timestamp, total_cost) = row?;
+            let (
+                id,
+                strategy_type,
+                description,
+                expected_profit,
+                risk_str,
+                instruments_json,
+                legs_json,
+                detected_at,
+                expiry_timestamp,
+                total_cost,
+            ) = row?;
             let risk_level = match risk_str.as_str() {
                 "low" => RiskLevel::Low,
                 "medium" => RiskLevel::Medium,
                 _ => RiskLevel::High,
             };
-            let instruments: Vec<String> = serde_json::from_str(&instruments_json).unwrap_or_default();
+            let instruments: Vec<String> =
+                serde_json::from_str(&instruments_json).unwrap_or_default();
             let legs: Vec<TradeLeg> = serde_json::from_str(&legs_json).unwrap_or_default();
-            results.push((id, Opportunity {
-                strategy_type,
-                description,
-                legs,
-                expected_profit,
-                total_cost: total_cost.unwrap_or(0.0),
-                risk_level,
-                instruments,
-                detected_at,
-                expiry_timestamp,
-            }));
+            results.push((
+                id,
+                Opportunity {
+                    strategy_type,
+                    description,
+                    legs,
+                    expected_profit,
+                    total_cost: total_cost.unwrap_or(0.0),
+                    risk_level,
+                    instruments,
+                    detected_at,
+                    expiry_timestamp,
+                },
+            ));
         }
         Ok(results)
     }
@@ -200,7 +218,8 @@ impl Storage {
     /// Count active instruments
     pub async fn count_instruments(&self) -> Result<usize> {
         let conn = self.conn.lock().await;
-        let count: i64 = conn.query_row("SELECT COUNT(*) FROM instruments", [], |row| row.get(0))?;
+        let count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM instruments", [], |row| row.get(0))?;
         Ok(count as usize)
     }
 

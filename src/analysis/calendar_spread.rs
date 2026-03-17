@@ -48,18 +48,15 @@ impl CalendarSpreadAnalyzer {
                         _ => continue,
                     };
                     let key = (inst.strike as u64, inst.option_type.to_string());
-                    groups
-                        .entry(key)
-                        .or_default()
-                        .push((
-                            inst.expiration_timestamp,
-                            inst.instrument_name.clone(),
-                            ticker.mark_iv,
-                            bid,
-                            ask,
-                            ticker.vega,
-                            ticker.underlying_price,
-                        ));
+                    groups.entry(key).or_default().push((
+                        inst.expiration_timestamp,
+                        inst.instrument_name.clone(),
+                        ticker.mark_iv,
+                        bid,
+                        ask,
+                        ticker.vega,
+                        ticker.underlying_price,
+                    ));
                 }
             }
         }
@@ -71,8 +68,17 @@ impl CalendarSpreadAnalyzer {
             entries.sort_by_key(|e| e.0);
 
             for pair in entries.windows(2) {
-                let (_exp_near, ref name_near, iv_near, bid_near, _ask_near, vega_near, underlying_near) = pair[0];
-                let (_exp_far, ref name_far, iv_far, _bid_far, ask_far, vega_far, underlying_far) = pair[1];
+                let (
+                    _exp_near,
+                    ref name_near,
+                    iv_near,
+                    bid_near,
+                    _ask_near,
+                    vega_near,
+                    underlying_near,
+                ) = pair[0];
+                let (_exp_far, ref name_far, iv_far, _bid_far, ask_far, vega_far, underlying_far) =
+                    pair[1];
 
                 let iv_diff = iv_near - iv_far;
 

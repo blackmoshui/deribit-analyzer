@@ -86,12 +86,7 @@ impl OrderBookManager {
         }
     }
 
-    pub async fn update(
-        &self,
-        instrument_name: &str,
-        bids: &[(f64, f64)],
-        asks: &[(f64, f64)],
-    ) {
+    pub async fn update(&self, instrument_name: &str, bids: &[(f64, f64)], asks: &[(f64, f64)]) {
         let mut books = self.books.write().await;
         let book = books
             .entry(instrument_name.to_string())

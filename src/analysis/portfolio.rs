@@ -9,9 +9,9 @@ pub struct PortfolioOptimizer {
 
 struct OppInfo {
     idx: usize,
-    delta_btc: f64,     // net futures delta (+long, -short)
-    futures_usd: f64,   // underlying price from futures leg
-    option_cost: f64,   // cost excluding futures margin
+    delta_btc: f64,   // net futures delta (+long, -short)
+    futures_usd: f64, // underlying price from futures leg
+    option_cost: f64, // cost excluding futures margin
 }
 
 impl PortfolioOptimizer {
@@ -119,10 +119,7 @@ impl PortfolioOptimizer {
                     strategy_type: "portfolio".to_string(),
                     description: format!(
                         "{} + {} | {} | {}x lev",
-                        opp_a.strategy_type,
-                        opp_b.strategy_type,
-                        delta_label,
-                        self.leverage as i32,
+                        opp_a.strategy_type, opp_b.strategy_type, delta_label, self.leverage as i32,
                     ),
                     legs,
                     expected_profit: combined_profit,

@@ -52,12 +52,7 @@ impl Notifier {
             for leg in &opp.legs {
                 println!(
                     "    Step {}: {:4} {} @ {:.6} {} (qty: {:.4})",
-                    leg.step,
-                    leg.action,
-                    leg.instrument,
-                    leg.price,
-                    leg.price_unit,
-                    leg.amount,
+                    leg.step, leg.action, leg.instrument, leg.price, leg.price_unit, leg.amount,
                 );
             }
             println!("{}", thin_sep);

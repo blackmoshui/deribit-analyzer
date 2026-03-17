@@ -56,16 +56,13 @@ impl CalendarArbAnalyzer {
                 }
 
                 let key = (inst.strike as u64, inst.option_type.to_string());
-                groups
-                    .entry(key)
-                    .or_default()
-                    .push((
-                        inst.expiration_timestamp,
-                        inst.instrument_name.clone(),
-                        bid,
-                        ask,
-                        underlying,
-                    ));
+                groups.entry(key).or_default().push((
+                    inst.expiration_timestamp,
+                    inst.instrument_name.clone(),
+                    bid,
+                    ask,
+                    underlying,
+                ));
             }
         }
 

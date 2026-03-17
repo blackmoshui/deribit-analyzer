@@ -38,20 +38,13 @@ impl ConversionAnalyzer {
         for expiration in &expirations {
             let strikes = registry.get_strikes_for_expiration(*expiration).await;
             let now = chrono::Utc::now().timestamp_millis();
-            let time_to_expiry =
-                (expiration - now) as f64 / (365.25 * 24.0 * 3600.0 * 1000.0);
+            let time_to_expiry = (expiration - now) as f64 / (365.25 * 24.0 * 3600.0 * 1000.0);
             if time_to_expiry <= 0.0 {
                 continue;
             }
             for strike in &strikes {
                 if let Some(opp) = self
-                    .check_strike(
-                        registry,
-                        ticker_cache,
-                        *strike,
-                        *expiration,
-                        time_to_expiry,
-                    )
+                    .check_strike(registry, ticker_cache, *strike, *expiration, time_to_expiry)
                     .await
                 {
                     opportunities.push(opp);

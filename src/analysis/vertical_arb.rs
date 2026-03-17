@@ -99,7 +99,8 @@ impl VerticalArbAnalyzer {
 
                     if profit_usd > self.min_profit_usd {
                         info!(
-                            k1 = k1, k2 = k2,
+                            k1 = k1,
+                            k2 = k2,
                             profit = profit_usd,
                             "Call monotonicity violation"
                         );
@@ -137,7 +138,8 @@ impl VerticalArbAnalyzer {
 
                     if profit_usd > self.min_profit_usd {
                         info!(
-                            k1 = k1, k2 = k2,
+                            k1 = k1,
+                            k2 = k2,
                             profit = profit_usd,
                             "Put monotonicity violation"
                         );
@@ -181,7 +183,9 @@ impl VerticalArbAnalyzer {
                     let profit_usd = -net_cost_btc * underlying;
                     if profit_usd > self.min_profit_usd {
                         info!(
-                            k1 = k1, k2 = k2, k3 = k3,
+                            k1 = k1,
+                            k2 = k2,
+                            k3 = k3,
                             profit = profit_usd,
                             "Butterfly convexity violation (calls)"
                         );
@@ -221,7 +225,9 @@ impl VerticalArbAnalyzer {
                     let profit_usd = -net_cost_btc * underlying;
                     if profit_usd > self.min_profit_usd {
                         info!(
-                            k1 = k1, k2 = k2, k3 = k3,
+                            k1 = k1,
+                            k2 = k2,
+                            k3 = k3,
                             profit = profit_usd,
                             "Butterfly convexity violation (puts)"
                         );

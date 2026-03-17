@@ -52,10 +52,7 @@ impl InstrumentRegistry {
         registry.clear();
 
         for item in instruments_array {
-            let name = item["instrument_name"]
-                .as_str()
-                .unwrap_or("")
-                .to_string();
+            let name = item["instrument_name"].as_str().unwrap_or("").to_string();
             let strike = item["strike"].as_f64().unwrap_or(0.0);
             let expiration = item["expiration_timestamp"].as_i64().unwrap_or(0);
             let option_type_str = item["option_type"].as_str().unwrap_or("");
@@ -111,9 +108,7 @@ impl InstrumentRegistry {
         let mut put = None;
 
         for inst in registry.values() {
-            if (inst.strike - strike).abs() < 0.01
-                && inst.expiration_timestamp == expiration
-            {
+            if (inst.strike - strike).abs() < 0.01 && inst.expiration_timestamp == expiration {
                 match inst.option_type {
                     OptionType::Call => call = Some(inst.clone()),
                     OptionType::Put => put = Some(inst.clone()),
@@ -130,10 +125,7 @@ impl InstrumentRegistry {
     /// Get unique expirations
     pub async fn get_expirations(&self) -> Vec<i64> {
         let registry = self.instruments.read().await;
-        let exp_set: HashSet<i64> = registry
-            .values()
-            .map(|i| i.expiration_timestamp)
-            .collect();
+        let exp_set: HashSet<i64> = registry.values().map(|i| i.expiration_timestamp).collect();
         let mut expirations: Vec<i64> = exp_set.into_iter().collect();
         expirations.sort();
         expirations

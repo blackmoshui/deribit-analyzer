@@ -293,11 +293,8 @@ impl WsManager {
             current
         };
 
-        let auth_req = AuthState::build_auth_request(
-            &self.config.client_id,
-            &self.config.client_secret,
-            id,
-        );
+        let auth_req =
+            AuthState::build_auth_request(&self.config.client_id, &self.config.client_secret, id);
 
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
         self.client
@@ -386,10 +383,7 @@ async fn handle_message(
 }
 
 fn handle_ticker_update(data: &Value, event_bus: &EventBus) {
-    let instrument_name = data["instrument_name"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
+    let instrument_name = data["instrument_name"].as_str().unwrap_or("").to_string();
 
     let ticker_data = crate::events::bus::TickerData {
         mark_price: data["mark_price"].as_f64().unwrap_or(0.0),
@@ -414,10 +408,7 @@ fn handle_ticker_update(data: &Value, event_bus: &EventBus) {
 }
 
 fn handle_orderbook_update(data: &Value, event_bus: &EventBus) {
-    let instrument_name = data["instrument_name"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
+    let instrument_name = data["instrument_name"].as_str().unwrap_or("").to_string();
 
     let parse_levels = |key: &str| -> Vec<(f64, f64)> {
         data[key]

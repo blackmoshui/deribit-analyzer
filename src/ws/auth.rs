@@ -18,11 +18,7 @@ impl AuthState {
     }
 
     /// Build authentication request using client_credentials
-    pub fn build_auth_request(
-        client_id: &str,
-        client_secret: &str,
-        request_id: u64,
-    ) -> Value {
+    pub fn build_auth_request(client_id: &str, client_secret: &str, request_id: u64) -> Value {
         json!({
             "jsonrpc": "2.0",
             "id": request_id,

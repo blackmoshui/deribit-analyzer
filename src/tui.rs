@@ -6,16 +6,31 @@ use crossterm::execute;
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use futures_util::StreamExt;
 use ratatui::prelude::*;
+use ratatui::symbols::Marker;
 use ratatui::widgets::*;
 use tokio::sync::mpsc;
 use tokio::time::{interval, Duration};
 
 use crate::analysis::opportunity::{Action, Opportunity, RiskLevel};
 use crate::analysis::portfolio::PortfolioOptimizer;
+use crate::analysis::short_put_history::HistoryResolution;
+use crate::analysis::short_put_history_service::{
+    LoadedShortPutHistory, ShortPutHistoryRequest, ShortPutHistoryService,
+};
 
 pub enum TuiEvent {
     Opportunity(Opportunity),
-    Connected { instrument_count: usize },
+    Connected {
+        instrument_count: usize,
+    },
+    ShortPutHistoryLoaded {
+        cache_key: String,
+        history: LoadedShortPutHistory,
+    },
+    ShortPutHistoryFailed {
+        cache_key: String,
+        error: String,
+    },
 }
 
 #[derive(PartialEq)]
@@ -64,10 +79,15 @@ struct App {
     /// Portfolio combinations (recomputed periodically)
     portfolios: Vec<Opportunity>,
     portfolio_optimizer: PortfolioOptimizer,
+    history_request_tx: Option<mpsc::UnboundedSender<ShortPutHistoryRequest>>,
+    history_cache: HashMap<String, LoadedShortPutHistory>,
+    pending_history_key: Option<String>,
+    detail_resolution: HistoryResolution,
+    detail_history_error: Option<String>,
 }
 
 impl App {
-    fn new() -> Self {
+    fn new(history_request_tx: Option<mpsc::UnboundedSender<ShortPutHistoryRequest>>) -> Self {
         App {
             opportunities: Vec::new(),
             opp_map: HashMap::new(),
@@ -83,6 +103,11 @@ impl App {
             leverage_idx: 0,
             portfolios: Vec::new(),
             portfolio_optimizer: PortfolioOptimizer::new(1.0),
+            history_request_tx,
+            history_cache: HashMap::new(),
+            pending_history_key: None,
+            detail_resolution: HistoryResolution::OneHour,
+            detail_history_error: None,
         }
     }
 
@@ -94,6 +119,10 @@ impl App {
         let mut instruments = opp.instruments.clone();
         instruments.sort();
         format!("{}:{}", opp.strategy_type, instruments.join(","))
+    }
+
+    fn history_cache_key(opp: &Opportunity, resolution: HistoryResolution) -> String {
+        format!("{}|{}", Self::opp_key(opp), resolution.label())
     }
 
     fn add_opportunity(&mut self, opp: Opportunity) {
@@ -114,6 +143,71 @@ impl App {
     fn recompute_portfolios(&mut self) {
         self.portfolio_optimizer.set_leverage(self.leverage());
         self.portfolios = self.portfolio_optimizer.find_best(&self.opportunities, 10);
+    }
+
+    fn selected_opportunity(&self) -> Option<Opportunity> {
+        self.table_state
+            .selected()
+            .and_then(|i| self.filtered.get(i))
+            .map(|&idx| self.display_opps()[idx].clone())
+    }
+
+    fn current_detail_history(&self, opp: &Opportunity) -> Option<&LoadedShortPutHistory> {
+        self.history_cache
+            .get(&Self::history_cache_key(opp, self.detail_resolution))
+    }
+
+    fn request_history_for_current_selection(&mut self) {
+        self.detail_history_error = None;
+
+        let Some(opp) = self.selected_opportunity() else {
+            return;
+        };
+
+        if opp.strategy_type != "short_put_yield" {
+            self.pending_history_key = None;
+            return;
+        }
+
+        let Some(expiry_timestamp_ms) = opp.expiry_timestamp else {
+            self.detail_history_error = Some("missing expiry timestamp".to_string());
+            self.pending_history_key = None;
+            return;
+        };
+
+        let Some(instrument_name) = opp.instruments.first().cloned() else {
+            self.detail_history_error = Some("missing option instrument".to_string());
+            self.pending_history_key = None;
+            return;
+        };
+
+        let cache_key = Self::history_cache_key(&opp, self.detail_resolution);
+        if self.history_cache.contains_key(&cache_key) {
+            self.pending_history_key = None;
+            return;
+        }
+
+        let Some(history_request_tx) = &self.history_request_tx else {
+            self.detail_history_error = Some("history loader unavailable".to_string());
+            self.pending_history_key = None;
+            return;
+        };
+
+        let request = ShortPutHistoryRequest {
+            cache_key: cache_key.clone(),
+            instrument_name,
+            strike: opp.total_cost,
+            expiry_timestamp_ms,
+            resolution: self.detail_resolution,
+        };
+
+        if history_request_tx.send(request).is_err() {
+            self.detail_history_error = Some("failed to queue history request".to_string());
+            self.pending_history_key = None;
+            return;
+        }
+
+        self.pending_history_key = Some(cache_key);
     }
 
     /// Get the display list: either main opportunities or portfolio combos
@@ -235,7 +329,10 @@ fn is_arb(strategy_type: &str) -> bool {
     )
 }
 
-pub async fn run(mut opp_rx: mpsc::UnboundedReceiver<TuiEvent>) -> Result<()> {
+pub async fn run(
+    mut opp_rx: mpsc::UnboundedReceiver<TuiEvent>,
+    history_service: Option<ShortPutHistoryService>,
+) -> Result<()> {
     terminal::enable_raw_mode()?;
     let mut stdout = std::io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
@@ -248,7 +345,7 @@ pub async fn run(mut opp_rx: mpsc::UnboundedReceiver<TuiEvent>) -> Result<()> {
         original_hook(info);
     }));
 
-    let result = run_inner(&mut opp_rx).await;
+    let result = run_inner(&mut opp_rx, history_service).await;
 
     // Restore terminal
     terminal::disable_raw_mode()?;
@@ -257,12 +354,33 @@ pub async fn run(mut opp_rx: mpsc::UnboundedReceiver<TuiEvent>) -> Result<()> {
     result
 }
 
-async fn run_inner(opp_rx: &mut mpsc::UnboundedReceiver<TuiEvent>) -> Result<()> {
+async fn run_inner(
+    opp_rx: &mut mpsc::UnboundedReceiver<TuiEvent>,
+    history_service: Option<ShortPutHistoryService>,
+) -> Result<()> {
     let backend = CrosstermBackend::new(std::io::stdout());
     let mut terminal = Terminal::new(backend)?;
-    let mut app = App::new();
+    let (history_req_tx, mut history_req_rx) = mpsc::unbounded_channel::<ShortPutHistoryRequest>();
+    let (history_evt_tx, mut history_evt_rx) = mpsc::unbounded_channel::<TuiEvent>();
+    let mut app = App::new(history_service.as_ref().map(|_| history_req_tx.clone()));
     let mut event_stream = EventStream::new();
     let mut tick = interval(Duration::from_millis(250));
+
+    if let Some(history_service) = history_service {
+        tokio::spawn(async move {
+            while let Some(request) = history_req_rx.recv().await {
+                let cache_key = request.cache_key.clone();
+                let event = match history_service.load_history(&request).await {
+                    Ok(history) => TuiEvent::ShortPutHistoryLoaded { cache_key, history },
+                    Err(error) => TuiEvent::ShortPutHistoryFailed {
+                        cache_key,
+                        error: error.to_string(),
+                    },
+                };
+                let _ = history_evt_tx.send(event);
+            }
+        });
+    }
 
     loop {
         terminal.draw(|f| draw(f, &mut app))?;
@@ -275,6 +393,24 @@ async fn run_inner(opp_rx: &mut mpsc::UnboundedReceiver<TuiEvent>) -> Result<()>
                     }
                 }
             }
+            history_event = history_evt_rx.recv() => {
+                match history_event {
+                    Some(TuiEvent::ShortPutHistoryLoaded { cache_key, history }) => {
+                        app.history_cache.insert(cache_key.clone(), history);
+                        if app.pending_history_key.as_ref() == Some(&cache_key) {
+                            app.pending_history_key = None;
+                            app.detail_history_error = None;
+                        }
+                    }
+                    Some(TuiEvent::ShortPutHistoryFailed { cache_key, error }) => {
+                        if app.pending_history_key.as_ref() == Some(&cache_key) {
+                            app.pending_history_key = None;
+                            app.detail_history_error = Some(error);
+                        }
+                    }
+                    _ => {}
+                }
+            }
             tui_event = opp_rx.recv() => {
                 match tui_event {
                     Some(TuiEvent::Opportunity(opp)) => {
@@ -285,6 +421,7 @@ async fn run_inner(opp_rx: &mut mpsc::UnboundedReceiver<TuiEvent>) -> Result<()>
                         app.connected = true;
                         app.instrument_count = instrument_count;
                     }
+                    Some(TuiEvent::ShortPutHistoryLoaded { .. } | TuiEvent::ShortPutHistoryFailed { .. }) => {}
                     None => break,
                 }
             }
@@ -331,6 +468,7 @@ fn handle_key(app: &mut App, key: event::KeyEvent) {
             KeyCode::Enter => {
                 if app.table_state.selected().is_some() && !app.filtered.is_empty() {
                     app.view = View::Detail;
+                    app.request_history_for_current_selection();
                 }
             }
             KeyCode::Char(c @ '0'..='9') => {
@@ -375,6 +513,14 @@ fn handle_key(app: &mut App, key: event::KeyEvent) {
         View::Detail => match key.code {
             KeyCode::Esc | KeyCode::Backspace => app.view = View::List,
             KeyCode::Char('q') => app.should_quit = true,
+            KeyCode::Char('1') => {
+                app.detail_resolution = HistoryResolution::FifteenMinutes;
+                app.request_history_for_current_selection();
+            }
+            KeyCode::Char('5') => {
+                app.detail_resolution = HistoryResolution::OneHour;
+                app.request_history_for_current_selection();
+            }
             _ => {}
         },
     }
@@ -595,12 +741,7 @@ fn draw_list(f: &mut Frame, app: &mut App) {
 }
 
 fn draw_detail(f: &mut Frame, app: &mut App) {
-    let opp = match app
-        .table_state
-        .selected()
-        .and_then(|i| app.filtered.get(i))
-        .map(|&idx| app.display_opps()[idx].clone())
-    {
+    let opp = match app.selected_opportunity() {
         Some(o) => o,
         None => {
             app.view = View::List;
@@ -610,9 +751,10 @@ fn draw_detail(f: &mut Frame, app: &mut App) {
 
     let chunks = Layout::vertical([
         Constraint::Length(3),
-        Constraint::Length(4),
+        Constraint::Length(3),
+        Constraint::Length(10),
         Constraint::Min(5),
-        Constraint::Length(9),
+        Constraint::Length(8),
         Constraint::Length(1),
     ])
     .split(f.area());
@@ -640,6 +782,8 @@ fn draw_detail(f: &mut Frame, app: &mut App) {
         .block(Block::bordered().title(" Description "))
         .wrap(Wrap { trim: false });
     f.render_widget(desc, chunks[1]);
+
+    draw_short_put_history_block(f, chunks[2], app, &opp);
 
     // Legs table
     if !opp.legs.is_empty() {
@@ -683,7 +827,7 @@ fn draw_detail(f: &mut Frame, app: &mut App) {
         .header(leg_header)
         .block(Block::bordered().title(" Execution Steps "));
 
-        f.render_widget(leg_table, chunks[2]);
+        f.render_widget(leg_table, chunks[3]);
     }
 
     // Profit info
@@ -752,11 +896,131 @@ fn draw_detail(f: &mut Frame, app: &mut App) {
     )));
 
     let profit_block = Paragraph::new(info_lines).block(Block::bordered().title(" Details "));
-    f.render_widget(profit_block, chunks[3]);
+    f.render_widget(profit_block, chunks[4]);
 
     // Footer
-    let footer = Paragraph::new(" Esc Back | q Quit").style(Style::default().fg(Color::DarkGray));
-    f.render_widget(footer, chunks[4]);
+    let footer = Paragraph::new(" 1 15m | 5 1h | Esc Back | q Quit")
+        .style(Style::default().fg(Color::DarkGray));
+    f.render_widget(footer, chunks[5]);
+}
+
+fn draw_short_put_history_block(f: &mut Frame, area: Rect, app: &App, opp: &Opportunity) {
+    if opp.strategy_type != "short_put_yield" {
+        let widget =
+            Paragraph::new(" History chart is only available for short put opportunities.")
+                .block(Block::bordered().title(" Approx APY History "));
+        f.render_widget(widget, area);
+        return;
+    }
+
+    let title = format!(" Approx APY History ({}) ", app.detail_resolution.label());
+
+    if let Some(error) = &app.detail_history_error {
+        let widget = Paragraph::new(format!(" {}\n\n Press 1 or 5 to retry.", error))
+            .block(Block::bordered().title(title));
+        f.render_widget(widget, area);
+        return;
+    }
+
+    if let Some(pending) = &app.pending_history_key {
+        if pending == &App::history_cache_key(opp, app.detail_resolution) {
+            let widget = Paragraph::new(format!(
+                " Loading {} approx APY history...\n\n This fetches only after you open detail.",
+                app.detail_resolution.label()
+            ))
+            .block(Block::bordered().title(title));
+            f.render_widget(widget, area);
+            return;
+        }
+    }
+
+    let Some(history) = app.current_detail_history(opp) else {
+        let widget = Paragraph::new(" Press 1 or 5 to load approximate APY history.")
+            .block(Block::bordered().title(title));
+        f.render_widget(widget, area);
+        return;
+    };
+
+    if history.points.is_empty() {
+        let widget = Paragraph::new(format!(
+            " {}\n\n No qualifying trades in the selected window.",
+            history.status
+        ))
+        .block(Block::bordered().title(title));
+        f.render_widget(widget, area);
+        return;
+    }
+
+    let data: Vec<(f64, f64)> = history
+        .points
+        .iter()
+        .enumerate()
+        .map(|(idx, point)| (idx as f64, point.annualized_return * 100.0))
+        .collect();
+    let min_y = data.iter().map(|(_, y)| *y).fold(f64::INFINITY, f64::min);
+    let max_y = data
+        .iter()
+        .map(|(_, y)| *y)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let (min_y, max_y) = if (max_y - min_y).abs() < 0.01 {
+        (min_y - 1.0, max_y + 1.0)
+    } else {
+        (min_y.floor(), max_y.ceil())
+    };
+
+    let start_label = history
+        .points
+        .first()
+        .and_then(|point| chrono::DateTime::from_timestamp_millis(point.bucket_start_ms))
+        .map(|dt| dt.format("%m-%d %H:%M").to_string())
+        .unwrap_or_else(|| "start".to_string());
+    let end_label = history
+        .points
+        .last()
+        .and_then(|point| chrono::DateTime::from_timestamp_millis(point.bucket_start_ms))
+        .map(|dt| dt.format("%m-%d %H:%M").to_string())
+        .unwrap_or_else(|| "end".to_string());
+    let mid_label = history
+        .points
+        .get(history.points.len() / 2)
+        .and_then(|point| chrono::DateTime::from_timestamp_millis(point.bucket_start_ms))
+        .map(|dt| dt.format("%m-%d %H:%M").to_string())
+        .unwrap_or_else(|| end_label.clone());
+
+    let inner = Layout::vertical([Constraint::Length(3), Constraint::Min(0)]).split(area);
+    let summary = Paragraph::new(format!(
+        " {} | range {} -> {} | {} pts",
+        history.status,
+        start_label,
+        end_label,
+        history.points.len()
+    ))
+    .block(Block::bordered().title(title.clone()));
+    f.render_widget(summary, inner[0]);
+
+    let chart = Chart::new(vec![Dataset::default()
+        .name("Approx APY")
+        .marker(Marker::Braille)
+        .graph_type(GraphType::Line)
+        .style(Style::default().fg(Color::Cyan))
+        .data(&data)])
+    .block(Block::bordered())
+    .x_axis(
+        Axis::default()
+            .bounds([0.0, (data.len().saturating_sub(1)) as f64])
+            .labels(vec![
+                Line::from(start_label),
+                Line::from(mid_label),
+                Line::from(end_label),
+            ]),
+    )
+    .y_axis(Axis::default().bounds([min_y, max_y]).labels(vec![
+        Line::from(format!("{:.1}%", min_y)),
+        Line::from(format!("{:.1}%", ((min_y + max_y) / 2.0))),
+        Line::from(format!("{:.1}%", max_y)),
+    ]))
+    .legend_position(None);
+    f.render_widget(chart, inner[1]);
 }
 
 fn truncate(s: &str, max: usize) -> String {

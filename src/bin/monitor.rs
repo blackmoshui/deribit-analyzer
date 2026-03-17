@@ -2,6 +2,7 @@ use anyhow::Result;
 use tokio::sync::mpsc;
 use tokio::time::{interval, Duration};
 
+use deribit::analysis::short_put_history_service::ShortPutHistoryService;
 use deribit::config::Config;
 use deribit::storage::sqlite::Storage;
 use deribit::tui::{self, TuiEvent};
@@ -52,8 +53,10 @@ async fn main() -> Result<()> {
         }
     });
 
+    let history_service = ShortPutHistoryService::new(storage.clone(), config.ws_url.clone());
+
     // Run TUI
-    tui::run(rx).await?;
+    tui::run(rx, Some(history_service)).await?;
 
     Ok(())
 }

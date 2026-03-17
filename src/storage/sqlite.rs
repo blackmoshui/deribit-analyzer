@@ -5,6 +5,7 @@ use tokio::sync::Mutex;
 use tracing::info;
 
 use crate::analysis::opportunity::{Opportunity, RiskLevel, TradeLeg};
+use crate::analysis::short_put_history::{HistoryResolution, ShortPutHistoryPoint};
 use crate::events::bus::TickerData;
 use crate::market::instruments::Instrument;
 
@@ -72,10 +73,26 @@ impl Storage {
                 total_cost REAL
             );
 
+            CREATE TABLE IF NOT EXISTS short_put_history_cache (
+                instrument_name TEXT NOT NULL,
+                resolution_minutes INTEGER NOT NULL,
+                bucket_start_ms INTEGER NOT NULL,
+                sample_timestamp_ms INTEGER NOT NULL,
+                option_price REAL NOT NULL,
+                underlying_price REAL NOT NULL,
+                premium_usd REAL NOT NULL,
+                annualized_return REAL NOT NULL,
+                trade_count INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (instrument_name, resolution_minutes, bucket_start_ms)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_tickers_instrument ON tickers(instrument_name);
             CREATE INDEX IF NOT EXISTS idx_tickers_timestamp ON tickers(timestamp);
             CREATE UNIQUE INDEX IF NOT EXISTS idx_opportunities_key ON opportunities(strategy_type, instruments);
             CREATE INDEX IF NOT EXISTS idx_opportunities_detected ON opportunities(detected_at);
+            CREATE INDEX IF NOT EXISTS idx_short_put_history_lookup
+                ON short_put_history_cache(instrument_name, resolution_minutes, bucket_start_ms);
             ",
         )
         .context("Failed to create tables")?;
@@ -247,6 +264,116 @@ impl Storage {
             ],
         )?;
         Ok(())
+    }
+
+    pub async fn save_short_put_history_points(
+        &self,
+        instrument_name: &str,
+        resolution: HistoryResolution,
+        points: &[ShortPutHistoryPoint],
+    ) -> Result<()> {
+        if points.is_empty() {
+            return Ok(());
+        }
+
+        let mut conn = self.conn.lock().await;
+        let tx = conn.transaction()?;
+        let now = chrono::Utc::now().timestamp_millis();
+
+        {
+            let mut stmt = tx.prepare(
+                "INSERT OR REPLACE INTO short_put_history_cache (
+                    instrument_name,
+                    resolution_minutes,
+                    bucket_start_ms,
+                    sample_timestamp_ms,
+                    option_price,
+                    underlying_price,
+                    premium_usd,
+                    annualized_return,
+                    trade_count,
+                    updated_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            )?;
+
+            for point in points {
+                stmt.execute(rusqlite::params![
+                    instrument_name,
+                    resolution.cache_key(),
+                    point.bucket_start_ms,
+                    point.sample_timestamp_ms,
+                    point.option_price,
+                    point.underlying_price,
+                    point.premium_usd,
+                    point.annualized_return,
+                    point.trade_count as i64,
+                    now,
+                ])?;
+            }
+        }
+
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub async fn delete_short_put_history_points_range(
+        &self,
+        instrument_name: &str,
+        resolution: HistoryResolution,
+        start_ms: i64,
+        end_ms: i64,
+    ) -> Result<()> {
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "DELETE FROM short_put_history_cache
+             WHERE instrument_name = ?1
+               AND resolution_minutes = ?2
+               AND bucket_start_ms >= ?3
+               AND bucket_start_ms <= ?4",
+            rusqlite::params![instrument_name, resolution.cache_key(), start_ms, end_ms],
+        )?;
+        Ok(())
+    }
+
+    pub async fn load_short_put_history_points(
+        &self,
+        instrument_name: &str,
+        resolution: HistoryResolution,
+        start_ms: i64,
+        end_ms: i64,
+    ) -> Result<Vec<ShortPutHistoryPoint>> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT bucket_start_ms, sample_timestamp_ms, option_price, underlying_price,
+                    premium_usd, annualized_return, trade_count
+             FROM short_put_history_cache
+             WHERE instrument_name = ?1
+               AND resolution_minutes = ?2
+               AND bucket_start_ms >= ?3
+               AND bucket_start_ms <= ?4
+             ORDER BY bucket_start_ms ASC",
+        )?;
+
+        let rows = stmt.query_map(
+            rusqlite::params![instrument_name, resolution.cache_key(), start_ms, end_ms],
+            |row| {
+                Ok(ShortPutHistoryPoint {
+                    bucket_start_ms: row.get(0)?,
+                    sample_timestamp_ms: row.get(1)?,
+                    option_price: row.get(2)?,
+                    underlying_price: row.get(3)?,
+                    premium_usd: row.get(4)?,
+                    annualized_return: row.get(5)?,
+                    trade_count: row.get::<_, i64>(6)? as usize,
+                })
+            },
+        )?;
+
+        let mut points = Vec::new();
+        for row in rows {
+            points.push(row?);
+        }
+        Ok(points)
     }
 }
 

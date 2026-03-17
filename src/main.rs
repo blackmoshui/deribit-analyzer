@@ -8,6 +8,7 @@ use deribit::analysis::calendar_arb::CalendarArbAnalyzer;
 use deribit::analysis::calendar_spread::CalendarSpreadAnalyzer;
 use deribit::analysis::conversion::ConversionAnalyzer;
 use deribit::analysis::put_call_parity::PutCallParityAnalyzer;
+use deribit::analysis::short_put_yield::ShortPutYieldAnalyzer;
 use deribit::analysis::vertical_arb::VerticalArbAnalyzer;
 use deribit::analysis::vol_surface::VolSurfaceAnalyzer;
 use deribit::config::Config;
@@ -32,7 +33,11 @@ async fn main() -> Result<()> {
 
     let config = Config::from_env()?;
     info!(
-        env = if config.ws_url.contains("test") { "test" } else { "prod" },
+        env = if config.ws_url.contains("test") {
+            "test"
+        } else {
+            "prod"
+        },
         "Configuration loaded"
     );
 
@@ -70,9 +75,7 @@ async fn main() -> Result<()> {
                         .await;
                     save_counter += 1;
                     if save_counter % 100 == 0 {
-                        if let Err(e) =
-                            storage_ticker.save_ticker(&instrument_name, &data).await
-                        {
+                        if let Err(e) = storage_ticker.save_ticker(&instrument_name, &data).await {
                             warn!(error = %e, "Failed to save ticker");
                         }
                     }
@@ -110,7 +113,8 @@ async fn main() -> Result<()> {
     });
 
     // Dedicated channel for opportunity saving (avoids broadcast lag from ticker flood)
-    let (opp_save_tx, mut opp_save_rx) = tokio::sync::mpsc::unbounded_channel::<deribit::analysis::opportunity::Opportunity>();
+    let (opp_save_tx, mut opp_save_rx) =
+        tokio::sync::mpsc::unbounded_channel::<deribit::analysis::opportunity::Opportunity>();
 
     // Analysis task
     let analysis_registry = registry.clone();
@@ -126,6 +130,7 @@ async fn main() -> Result<()> {
         let calendar_arb = CalendarArbAnalyzer::new(5.0);
         let vol_surface = VolSurfaceAnalyzer::new(15.0);
         let calendar_spread = CalendarSpreadAnalyzer::new(10.0);
+        let short_put_yield = ShortPutYieldAnalyzer::new();
 
         tokio::time::sleep(Duration::from_secs(30)).await;
         info!("Starting arbitrage scanning...");
@@ -171,6 +176,11 @@ async fn main() -> Result<()> {
                 signal_count += 1;
             }
             for opp in calendar_spread.scan(reg, tc).await {
+                let _ = analysis_opp_tx.send(opp.clone());
+                analysis_event_bus.publish(Event::OpportunityFound(opp));
+                signal_count += 1;
+            }
+            for opp in short_put_yield.scan(reg, tc).await {
                 let _ = analysis_opp_tx.send(opp.clone());
                 analysis_event_bus.publish(Event::OpportunityFound(opp));
                 signal_count += 1;

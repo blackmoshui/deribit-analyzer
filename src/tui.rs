@@ -34,6 +34,7 @@ enum Filter {
     ConvRev,
     Calendar,
     Vol,
+    ShortPut,
     Portfolio,
 }
 
@@ -159,10 +160,9 @@ impl App {
                             opp.strategy_type.as_str(),
                             "vertical_arb" | "butterfly_arb" | "box_spread"
                         ),
-                        Filter::ConvRev => matches!(
-                            opp.strategy_type.as_str(),
-                            "conversion" | "reversal"
-                        ),
+                        Filter::ConvRev => {
+                            matches!(opp.strategy_type.as_str(), "conversion" | "reversal")
+                        }
                         Filter::Calendar => matches!(
                             opp.strategy_type.as_str(),
                             "calendar_arb" | "calendar_spread"
@@ -171,6 +171,7 @@ impl App {
                             opp.strategy_type.as_str(),
                             "vol_surface_anomaly" | "butterfly_spread"
                         ),
+                        Filter::ShortPut => opp.strategy_type == "short_put_yield",
                         Filter::Portfolio => unreachable!(),
                     }
                 })
@@ -192,29 +193,32 @@ impl App {
                     .partial_cmp(&opps[*a].expected_profit)
                     .unwrap_or(std::cmp::Ordering::Equal)
             }),
-            SortBy::Time => self.filtered.sort_by(|a, b| {
-                opps[*b].detected_at.cmp(&opps[*a].detected_at)
-            }),
+            SortBy::Time => self
+                .filtered
+                .sort_by(|a, b| opps[*b].detected_at.cmp(&opps[*a].detected_at)),
             SortBy::Apy => self.filtered.sort_by(|a, b| {
-                let apy_a = opps[*a].annualized_return_leveraged(leverage).unwrap_or(0.0);
-                let apy_b = opps[*b].annualized_return_leveraged(leverage).unwrap_or(0.0);
-                apy_b.partial_cmp(&apy_a).unwrap_or(std::cmp::Ordering::Equal)
+                let apy_a = opps[*a]
+                    .annualized_return_leveraged(leverage)
+                    .unwrap_or(0.0);
+                let apy_b = opps[*b]
+                    .annualized_return_leveraged(leverage)
+                    .unwrap_or(0.0);
+                apy_b
+                    .partial_cmp(&apy_a)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             }),
         }
 
         // Restore selection by key
         if let Some(ref key) = self.selected_key {
-            if let Some(pos) = self.filtered.iter().position(|&idx| {
-                Self::opp_key(&opps[idx]) == *key
-            }) {
+            if let Some(pos) = self
+                .filtered
+                .iter()
+                .position(|&idx| Self::opp_key(&opps[idx]) == *key)
+            {
                 self.table_state.select(Some(pos));
             }
         }
-    }
-
-    fn selected_opp(&self) -> Option<&Opportunity> {
-        let selected = self.table_state.selected()?;
-        self.filtered.get(selected).map(|&i| &self.opportunities[i])
     }
 }
 
@@ -329,7 +333,7 @@ fn handle_key(app: &mut App, key: event::KeyEvent) {
                     app.view = View::Detail;
                 }
             }
-            KeyCode::Char(c @ '1'..='9') => {
+            KeyCode::Char(c @ '0'..='9') => {
                 app.filter = match c {
                     '1' => Filter::All,
                     '2' => Filter::Arbitrage,
@@ -339,14 +343,19 @@ fn handle_key(app: &mut App, key: event::KeyEvent) {
                     '6' => Filter::ConvRev,
                     '7' => Filter::Calendar,
                     '8' => Filter::Vol,
-                    '9' => {
+                    '9' => Filter::ShortPut,
+                    '0' => {
                         app.recompute_portfolios();
                         Filter::Portfolio
                     }
                     _ => unreachable!(),
                 };
                 app.update_filtered();
-                app.table_state.select(if app.filtered.is_empty() { None } else { Some(0) });
+                app.table_state.select(if app.filtered.is_empty() {
+                    None
+                } else {
+                    Some(0)
+                });
             }
             KeyCode::Char('l') => {
                 app.leverage_idx = (app.leverage_idx + 1) % LEVERAGE_OPTIONS.len();
@@ -442,12 +451,7 @@ fn draw_list(f: &mut Frame, app: &mut App) {
         .count();
     let cal_count = active
         .iter()
-        .filter(|o| {
-            matches!(
-                o.strategy_type.as_str(),
-                "calendar_arb" | "calendar_spread"
-            )
-        })
+        .filter(|o| matches!(o.strategy_type.as_str(), "calendar_arb" | "calendar_spread"))
         .count();
     let vol_count = active
         .iter()
@@ -458,6 +462,10 @@ fn draw_list(f: &mut Frame, app: &mut App) {
             )
         })
         .count();
+    let short_put_count = active
+        .iter()
+        .filter(|o| o.strategy_type == "short_put_yield")
+        .count();
     let tabs = Tabs::new(vec![
         format!("All [{}]", active.len()),
         format!("Arb [{}]", arb_count),
@@ -467,6 +475,7 @@ fn draw_list(f: &mut Frame, app: &mut App) {
         format!("C/R [{}]", conv_count),
         format!("Cal [{}]", cal_count),
         format!("Vol [{}]", vol_count),
+        format!("PUT [{}]", short_put_count),
         format!("Port [{}]", app.portfolios.len()),
     ])
     .block(Block::bordered())
@@ -479,7 +488,8 @@ fn draw_list(f: &mut Frame, app: &mut App) {
         Filter::ConvRev => 5,
         Filter::Calendar => 6,
         Filter::Vol => 7,
-        Filter::Portfolio => 8,
+        Filter::ShortPut => 8,
+        Filter::Portfolio => 9,
     })
     .highlight_style(
         Style::default()
@@ -494,16 +504,28 @@ fn draw_list(f: &mut Frame, app: &mut App) {
         Cell::from("Description"),
         Cell::from(format!(
             "Profit{}",
-            if matches!(app.sort_by, SortBy::Profit) { " \u{2193}" } else { "" }
+            if matches!(app.sort_by, SortBy::Profit) {
+                " \u{2193}"
+            } else {
+                ""
+            }
         )),
         Cell::from(format!(
             "APY{}",
-            if matches!(app.sort_by, SortBy::Apy) { " \u{2193}" } else { "" }
+            if matches!(app.sort_by, SortBy::Apy) {
+                " \u{2193}"
+            } else {
+                ""
+            }
         )),
         Cell::from("Risk"),
         Cell::from(format!(
             "Time{}",
-            if matches!(app.sort_by, SortBy::Time) { " \u{2193}" } else { "" }
+            if matches!(app.sort_by, SortBy::Time) {
+                " \u{2193}"
+            } else {
+                ""
+            }
         )),
     ])
     .style(
@@ -566,7 +588,7 @@ fn draw_list(f: &mut Frame, app: &mut App) {
 
     // Footer
     let footer = Paragraph::new(
-        " \u{2191}\u{2193}/jk Navigate | Enter Detail | 1-9 Filter | s Sort | l Leverage | q Quit",
+        " \u{2191}\u{2193}/jk Navigate | Enter Detail | 1-9/0 Filter | s Sort | l Leverage | q Quit",
     )
     .style(Style::default().fg(Color::DarkGray));
     f.render_widget(footer, chunks[3]);
@@ -733,8 +755,7 @@ fn draw_detail(f: &mut Frame, app: &mut App) {
     f.render_widget(profit_block, chunks[3]);
 
     // Footer
-    let footer =
-        Paragraph::new(" Esc Back | q Quit").style(Style::default().fg(Color::DarkGray));
+    let footer = Paragraph::new(" Esc Back | q Quit").style(Style::default().fg(Color::DarkGray));
     f.render_widget(footer, chunks[4]);
 }
 

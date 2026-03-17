@@ -5,5 +5,6 @@ pub mod conversion;
 pub mod opportunity;
 pub mod portfolio;
 pub mod put_call_parity;
+pub mod short_put_yield;
 pub mod vertical_arb;
 pub mod vol_surface;

@@ -20,6 +20,12 @@ pub enum OptionType {
     Put,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum OptionPriceCurrency {
+    BaseAsset,
+    QuoteCurrency,
+}
+
 impl std::fmt::Display for OptionType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -44,12 +50,16 @@ impl InstrumentRegistry {
 
     /// Load instruments from API response
     pub async fn load_from_response(&self, result: &serde_json::Value) -> Result<usize> {
+        let instruments = Self::parse_response(result)?;
+        Ok(self.replace_all(instruments).await)
+    }
+
+    pub fn parse_response(result: &serde_json::Value) -> Result<Vec<Instrument>> {
         let instruments_array = result
             .as_array()
             .ok_or_else(|| anyhow::anyhow!("Expected array of instruments"))?;
 
-        let mut registry = self.instruments.write().await;
-        registry.clear();
+        let mut instruments = Vec::new();
 
         for item in instruments_array {
             let name = item["instrument_name"].as_str().unwrap_or("").to_string();
@@ -68,21 +78,29 @@ impl InstrumentRegistry {
                 continue;
             }
 
-            registry.insert(
-                name.clone(),
-                Instrument {
-                    instrument_name: name,
-                    strike,
-                    expiration_timestamp: expiration,
-                    option_type,
-                    is_active,
-                },
-            );
+            instruments.push(Instrument {
+                instrument_name: name,
+                strike,
+                expiration_timestamp: expiration,
+                option_type,
+                is_active,
+            });
+        }
+
+        Ok(instruments)
+    }
+
+    pub async fn replace_all(&self, instruments: Vec<Instrument>) -> usize {
+        let mut registry = self.instruments.write().await;
+        registry.clear();
+
+        for instrument in instruments {
+            registry.insert(instrument.instrument_name.clone(), instrument);
         }
 
         let count = registry.len();
-        info!(count = count, "Loaded BTC option instruments");
-        Ok(count)
+        info!(count = count, "Loaded option instruments");
+        count
     }
 
     pub async fn get(&self, name: &str) -> Option<Instrument> {
@@ -142,5 +160,38 @@ impl InstrumentRegistry {
         let mut strikes: Vec<f64> = strike_set.into_iter().map(|s| s as f64).collect();
         strikes.sort_by(|a, b| a.partial_cmp(b).unwrap());
         strikes
+    }
+}
+
+pub fn option_price_currency(instrument_name: &str) -> OptionPriceCurrency {
+    let base = instrument_name.split('-').next().unwrap_or_default();
+    if base.contains('_') {
+        OptionPriceCurrency::QuoteCurrency
+    } else {
+        OptionPriceCurrency::BaseAsset
+    }
+}
+
+pub fn option_premium_usd(
+    instrument_name: &str,
+    option_price: f64,
+    underlying_price: f64,
+) -> Option<f64> {
+    if option_price <= 0.0 || underlying_price <= 0.0 {
+        return None;
+    }
+
+    Some(match option_price_currency(instrument_name) {
+        OptionPriceCurrency::BaseAsset => option_price * underlying_price,
+        OptionPriceCurrency::QuoteCurrency => option_price,
+    })
+}
+
+pub fn option_index_name(instrument_name: &str) -> Option<String> {
+    let base = instrument_name.split('-').next()?;
+    if base.contains('_') {
+        Some(base.to_lowercase())
+    } else {
+        Some(format!("{}_usd", base.to_lowercase()))
     }
 }

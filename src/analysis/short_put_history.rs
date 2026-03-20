@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+use crate::market::instruments::OptionPriceCurrency;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum HistoryResolution {
     FifteenMinutes,
@@ -82,6 +84,22 @@ pub fn aggregate_history_points(
     resolution: HistoryResolution,
     trades: &[ShortPutTradeSample],
 ) -> Vec<ShortPutHistoryPoint> {
+    aggregate_history_points_with_price_currency(
+        strike,
+        expiry_timestamp_ms,
+        resolution,
+        trades,
+        OptionPriceCurrency::BaseAsset,
+    )
+}
+
+pub fn aggregate_history_points_with_price_currency(
+    strike: f64,
+    expiry_timestamp_ms: i64,
+    resolution: HistoryResolution,
+    trades: &[ShortPutTradeSample],
+    price_currency: OptionPriceCurrency,
+) -> Vec<ShortPutHistoryPoint> {
     if strike <= 0.0 {
         return Vec::new();
     }
@@ -113,7 +131,8 @@ pub fn aggregate_history_points(
                 return None;
             }
 
-            let premium_usd = trade.option_price * trade.index_price;
+            let premium_usd =
+                option_premium_usd(price_currency, trade.option_price, trade.index_price);
             if premium_usd < 1.0 {
                 return None;
             }
@@ -141,6 +160,22 @@ pub fn build_history_points_from_candles(
     expiry_timestamp_ms: i64,
     option_candles: &[OptionCandlePoint],
     index_points: &[IndexPricePoint],
+) -> Vec<ShortPutHistoryPoint> {
+    build_history_points_from_candles_with_price_currency(
+        strike,
+        expiry_timestamp_ms,
+        option_candles,
+        index_points,
+        OptionPriceCurrency::BaseAsset,
+    )
+}
+
+pub fn build_history_points_from_candles_with_price_currency(
+    strike: f64,
+    expiry_timestamp_ms: i64,
+    option_candles: &[OptionCandlePoint],
+    index_points: &[IndexPricePoint],
+    price_currency: OptionPriceCurrency,
 ) -> Vec<ShortPutHistoryPoint> {
     if strike <= 0.0 {
         return Vec::new();
@@ -170,7 +205,7 @@ pub fn build_history_points_from_candles(
             continue;
         }
 
-        let premium_usd = candle.close_price * underlying_price;
+        let premium_usd = option_premium_usd(price_currency, candle.close_price, underlying_price);
         if premium_usd < 1.0 {
             continue;
         }
@@ -192,4 +227,15 @@ pub fn build_history_points_from_candles(
     }
 
     points
+}
+
+fn option_premium_usd(
+    price_currency: OptionPriceCurrency,
+    option_price: f64,
+    underlying_price: f64,
+) -> f64 {
+    match price_currency {
+        OptionPriceCurrency::BaseAsset => option_price * underlying_price,
+        OptionPriceCurrency::QuoteCurrency => option_price,
+    }
 }

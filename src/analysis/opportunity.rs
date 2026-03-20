@@ -29,6 +29,7 @@ impl std::fmt::Display for Action {
 pub enum PriceUnit {
     Btc,
     Usd,
+    Usdc,
 }
 
 impl std::fmt::Display for PriceUnit {
@@ -36,6 +37,7 @@ impl std::fmt::Display for PriceUnit {
         match self {
             PriceUnit::Btc => write!(f, "BTC"),
             PriceUnit::Usd => write!(f, "USD"),
+            PriceUnit::Usdc => write!(f, "USDC"),
         }
     }
 }
@@ -65,6 +67,11 @@ impl TradeLeg {
 
     pub fn with_usd(mut self) -> Self {
         self.price_unit = PriceUnit::Usd;
+        self
+    }
+
+    pub fn with_usdc(mut self) -> Self {
+        self.price_unit = PriceUnit::Usdc;
         self
     }
 }

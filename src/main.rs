@@ -43,6 +43,7 @@ async fn main() -> Result<()> {
 
     let event_bus = EventBus::new(4096);
     let registry = InstrumentRegistry::new();
+    let short_put_registry = InstrumentRegistry::new();
     let ticker_cache = TickerCache::new();
     let orderbook_manager = OrderBookManager::new();
     let storage = Storage::new(&config.db_path).await?;
@@ -118,6 +119,7 @@ async fn main() -> Result<()> {
 
     // Analysis task
     let analysis_registry = registry.clone();
+    let analysis_short_put_registry = short_put_registry.clone();
     let analysis_ticker = ticker_cache.clone();
     let analysis_event_bus = event_bus.clone();
     let alert_threshold = config.alert_threshold;
@@ -180,7 +182,7 @@ async fn main() -> Result<()> {
                 analysis_event_bus.publish(Event::OpportunityFound(opp));
                 signal_count += 1;
             }
-            for opp in short_put_yield.scan(reg, tc).await {
+            for opp in short_put_yield.scan(&analysis_short_put_registry, tc).await {
                 let _ = analysis_opp_tx.send(opp.clone());
                 analysis_event_bus.publish(Event::OpportunityFound(opp));
                 signal_count += 1;
@@ -211,7 +213,15 @@ async fn main() -> Result<()> {
 
     // Load instruments + subscribe loop
     loop {
-        match load_and_subscribe(&ws_client, &registry, &storage, &event_bus).await {
+        match load_and_subscribe(
+            &ws_client,
+            &registry,
+            &short_put_registry,
+            &storage,
+            &event_bus,
+        )
+        .await
+        {
             Ok(()) => {
                 info!("Instruments loaded and subscribed successfully");
             }
@@ -231,11 +241,12 @@ async fn main() -> Result<()> {
 async fn load_and_subscribe(
     client: &deribit::ws::client::WsClient,
     registry: &InstrumentRegistry,
+    short_put_registry: &InstrumentRegistry,
     storage: &Storage,
     event_bus: &EventBus,
 ) -> Result<()> {
     info!("Loading BTC option instruments...");
-    let instruments_result = client
+    let btc_instruments_result = client
         .send_request(
             "public/get_instruments",
             json!({
@@ -246,18 +257,43 @@ async fn load_and_subscribe(
         )
         .await?;
 
-    let count = registry.load_from_response(&instruments_result).await?;
+    let btc_instruments = InstrumentRegistry::parse_response(&btc_instruments_result)?;
+    let count = registry.replace_all(btc_instruments.clone()).await;
 
-    let all_instruments = registry.get_all().await;
+    info!("Loading BTC-USDC option instruments for short put...");
+    let usdc_instruments_result = client
+        .send_request(
+            "public/get_instruments",
+            json!({
+                "currency": "USDC",
+                "kind": "option",
+                "expired": false
+            }),
+        )
+        .await?;
+
+    let btc_usdc_instruments: Vec<_> =
+        InstrumentRegistry::parse_response(&usdc_instruments_result)?
+            .into_iter()
+            .filter(|inst| inst.instrument_name.starts_with("BTC_USDC-"))
+            .collect();
+
+    let mut short_put_instruments = btc_instruments;
+    short_put_instruments.extend(btc_usdc_instruments);
+    let short_put_count = short_put_registry.replace_all(short_put_instruments).await;
+
+    let all_instruments = short_put_registry.get_all().await;
     for inst in &all_instruments {
         if let Err(e) = storage.save_instrument(inst).await {
             warn!(error = %e, instrument = %inst.instrument_name, "Failed to save instrument");
         }
     }
 
-    event_bus.publish(Event::InstrumentsLoaded { count });
+    event_bus.publish(Event::InstrumentsLoaded {
+        count: short_put_count.max(count),
+    });
 
-    let names = registry.get_all_names().await;
+    let names = short_put_registry.get_all_names().await;
     info!(count = names.len(), "Subscribing to ticker channels...");
     Subscriber::subscribe_tickers(client, &names).await?;
 

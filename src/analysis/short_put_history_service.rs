@@ -2,9 +2,10 @@ use anyhow::{Context, Result};
 use serde_json::json;
 
 use crate::analysis::short_put_history::{
-    build_history_points_from_candles, HistoryResolution, IndexPricePoint, OptionCandlePoint,
-    ShortPutHistoryPoint,
+    build_history_points_from_candles_with_price_currency, HistoryResolution, IndexPricePoint,
+    OptionCandlePoint, ShortPutHistoryPoint,
 };
+use crate::market::instruments::{option_index_name, option_price_currency};
 use crate::storage::sqlite::Storage;
 use crate::ws::public_client::PublicRpcClient;
 
@@ -156,18 +157,19 @@ impl ShortPutHistoryService {
         let option_candles = self
             .fetch_option_candles(instrument_name, start_ms, end_ms, resolution)
             .await?;
-        let index_name = index_name_for_instrument(instrument_name).ok_or_else(|| {
+        let index_name = option_index_name(instrument_name).ok_or_else(|| {
             anyhow::anyhow!("Unable to derive index name from {}", instrument_name)
         })?;
         let index_points = self
             .fetch_index_points(&index_name, start_ms, end_ms, resolution)
             .await?;
 
-        Ok(build_history_points_from_candles(
+        Ok(build_history_points_from_candles_with_price_currency(
             strike,
             expiry_timestamp_ms,
             &option_candles,
             &index_points,
+            option_price_currency(instrument_name),
         ))
     }
 
@@ -271,11 +273,6 @@ pub fn index_chart_range_for_resolution(resolution: HistoryResolution) -> &'stat
     }
 }
 
-fn index_name_for_instrument(instrument_name: &str) -> Option<String> {
-    let base = instrument_name.split('-').next()?;
-    Some(format!("{}_usd", base.to_lowercase()))
-}
-
 fn parse_option_candles(result: &serde_json::Value) -> Result<Vec<OptionCandlePoint>> {
     let ticks = result["ticks"]
         .as_array()
@@ -326,5 +323,18 @@ fn lookback_label(resolution: HistoryResolution) -> &'static str {
     match resolution {
         HistoryResolution::FifteenMinutes => "last 24h",
         HistoryResolution::OneHour => "last 30d",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::market::instruments::option_index_name;
+
+    #[test]
+    fn derives_btc_usdc_index_names_without_appending_extra_usd() {
+        assert_eq!(
+            option_index_name("BTC_USDC-30APR26-60000-P").as_deref(),
+            Some("btc_usdc")
+        );
     }
 }

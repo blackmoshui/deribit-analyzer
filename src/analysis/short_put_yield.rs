@@ -1,7 +1,9 @@
 use tracing::info;
 
 use crate::analysis::opportunity::{Opportunity, RiskLevel, TradeLeg};
-use crate::market::instruments::{InstrumentRegistry, OptionType};
+use crate::market::instruments::{
+    option_premium_usd, option_price_currency, InstrumentRegistry, OptionPriceCurrency, OptionType,
+};
 use crate::market::ticker::TickerCache;
 
 /// Lists cash-secured short-put yields using the live bid as premium received.
@@ -37,7 +39,7 @@ impl ShortPutYieldAnalyzer {
                 continue;
             };
 
-            let Some(bid_price_btc) = ticker.best_bid_price.filter(|&p| p > 0.0) else {
+            let Some(best_bid_price) = ticker.best_bid_price.filter(|&p| p > 0.0) else {
                 continue;
             };
 
@@ -49,7 +51,13 @@ impl ShortPutYieldAnalyzer {
                 continue;
             }
 
-            let premium_usd = bid_price_btc * ticker.underlying_price;
+            let Some(premium_usd) = option_premium_usd(
+                &inst.instrument_name,
+                best_bid_price,
+                ticker.underlying_price,
+            ) else {
+                continue;
+            };
             if premium_usd < 1.0 {
                 continue;
             }
@@ -68,6 +76,15 @@ impl ShortPutYieldAnalyzer {
                 "Short put yield detected"
             );
 
+            let leg = match option_price_currency(&inst.instrument_name) {
+                OptionPriceCurrency::BaseAsset => {
+                    TradeLeg::sell(1, &inst.instrument_name, best_bid_price, 1.0)
+                }
+                OptionPriceCurrency::QuoteCurrency => {
+                    TradeLeg::sell(1, &inst.instrument_name, best_bid_price, 1.0).with_usdc()
+                }
+            };
+
             opportunities.push(Opportunity {
                 strategy_type: "short_put_yield".to_string(),
                 description: format!(
@@ -77,7 +94,7 @@ impl ShortPutYieldAnalyzer {
                     ticker.underlying_price,
                     annualized * 100.0,
                 ),
-                legs: vec![TradeLeg::sell(1, &inst.instrument_name, bid_price_btc, 1.0)],
+                legs: vec![leg],
                 expected_profit: premium_usd,
                 total_cost: inst.strike,
                 risk_level: RiskLevel::High,

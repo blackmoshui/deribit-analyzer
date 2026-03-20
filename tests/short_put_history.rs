@@ -1,10 +1,12 @@
 use deribit::analysis::short_put_history::{
-    aggregate_history_points, build_history_points_from_candles, HistoryResolution,
-    IndexPricePoint, OptionCandlePoint, ShortPutTradeSample,
+    aggregate_history_points, build_history_points_from_candles,
+    build_history_points_from_candles_with_price_currency, HistoryResolution, IndexPricePoint,
+    OptionCandlePoint, ShortPutTradeSample,
 };
 use deribit::analysis::short_put_history_service::{
     cache_covers_requested_window, compute_fetch_start_ms, index_chart_range_for_resolution,
 };
+use deribit::market::instruments::OptionPriceCurrency;
 use deribit::storage::sqlite::Storage;
 
 fn approx_eq(left: f64, right: f64, tolerance: f64) {
@@ -143,6 +145,37 @@ fn builds_history_points_from_candles_and_index_series() {
     approx_eq(points[1].underlying_price, 75_000.0, 1e-6);
     approx_eq(points[1].premium_usd, 6_825.0, 1e-6);
     assert_eq!(points[1].trade_count, 0);
+}
+
+#[test]
+fn builds_history_points_for_btc_usdc_candles_without_btc_repricing() {
+    let base_ms = 1_700_000_100_000;
+    let expiry_ms = base_ms + 30 * 86_400_000;
+    let option_candles = vec![OptionCandlePoint {
+        tick_ms: base_ms,
+        close_price: 2_400.0,
+        volume: 1.0,
+    }];
+    let index_points = vec![IndexPricePoint {
+        tick_ms: base_ms - 60_000,
+        price: 80_000.0,
+    }];
+
+    let points = build_history_points_from_candles_with_price_currency(
+        60_000.0,
+        expiry_ms,
+        &option_candles,
+        &index_points,
+        OptionPriceCurrency::QuoteCurrency,
+    );
+
+    assert_eq!(points.len(), 1);
+    approx_eq(points[0].premium_usd, 2_400.0, 1e-6);
+    approx_eq(
+        points[0].annualized_return,
+        (2_400.0 / 60_000.0) * (365.0 / 30.0),
+        0.02,
+    );
 }
 
 #[test]

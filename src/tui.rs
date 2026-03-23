@@ -58,6 +58,54 @@ enum SortBy {
     Profit,
     Time,
     Apy,
+    Expiry,
+}
+
+#[derive(PartialEq, Clone, Copy)]
+enum ExpiryFilter {
+    All,
+    Short,  // ≤7 days
+    Medium, // 7-30 days
+    Long,   // >30 days
+}
+
+impl ExpiryFilter {
+    fn label(self) -> &'static str {
+        match self {
+            ExpiryFilter::All => "All Expiry",
+            ExpiryFilter::Short => "≤7d",
+            ExpiryFilter::Medium => "7-30d",
+            ExpiryFilter::Long => ">30d",
+        }
+    }
+
+    fn matches(self, expiry_ms: Option<i64>) -> bool {
+        match self {
+            ExpiryFilter::All => true,
+            _ => {
+                let Some(expiry_ms) = expiry_ms else {
+                    return false;
+                };
+                let now_ms = chrono::Utc::now().timestamp() * 1000;
+                let days = (expiry_ms - now_ms) as f64 / 86_400_000.0;
+                match self {
+                    ExpiryFilter::Short => days <= 7.0,
+                    ExpiryFilter::Medium => days > 7.0 && days <= 30.0,
+                    ExpiryFilter::Long => days > 30.0,
+                    ExpiryFilter::All => unreachable!(),
+                }
+            }
+        }
+    }
+
+    fn next(self) -> Self {
+        match self {
+            ExpiryFilter::All => ExpiryFilter::Short,
+            ExpiryFilter::Short => ExpiryFilter::Medium,
+            ExpiryFilter::Medium => ExpiryFilter::Long,
+            ExpiryFilter::Long => ExpiryFilter::All,
+        }
+    }
 }
 
 const LEVERAGE_OPTIONS: [f64; 4] = [1.0, 2.0, 5.0, 10.0];
@@ -84,6 +132,7 @@ struct App {
     pending_history_key: Option<String>,
     detail_resolution: HistoryResolution,
     detail_history_error: Option<String>,
+    expiry_filter: ExpiryFilter,
 }
 
 impl App {
@@ -108,6 +157,7 @@ impl App {
             pending_history_key: None,
             detail_resolution: HistoryResolution::OneHour,
             detail_history_error: None,
+            expiry_filter: ExpiryFilter::All,
         }
     }
 
@@ -245,7 +295,7 @@ impl App {
                     if now - opp.detected_at > stale_threshold {
                         return false;
                     }
-                    match self.filter {
+                    let type_match = match self.filter {
                         Filter::All => true,
                         Filter::Arbitrage => is_arb(&opp.strategy_type),
                         Filter::Signal => !is_arb(&opp.strategy_type),
@@ -267,7 +317,8 @@ impl App {
                         ),
                         Filter::ShortPut => opp.strategy_type == "short_put_yield",
                         Filter::Portfolio => unreachable!(),
-                    }
+                    };
+                    type_match && self.expiry_filter.matches(opp.expiry_timestamp)
                 })
                 .map(|(i, _)| i)
                 .collect();
@@ -300,6 +351,11 @@ impl App {
                 apy_b
                     .partial_cmp(&apy_a)
                     .unwrap_or(std::cmp::Ordering::Equal)
+            }),
+            SortBy::Expiry => self.filtered.sort_by(|a, b| {
+                let exp_a = opps[*a].expiry_timestamp.unwrap_or(i64::MAX);
+                let exp_b = opps[*b].expiry_timestamp.unwrap_or(i64::MAX);
+                exp_a.cmp(&exp_b)
             }),
         }
 
@@ -503,10 +559,20 @@ fn handle_key(app: &mut App, key: event::KeyEvent) {
             KeyCode::Char('s') => {
                 app.sort_by = match app.sort_by {
                     SortBy::Profit => SortBy::Apy,
-                    SortBy::Apy => SortBy::Time,
+                    SortBy::Apy => SortBy::Expiry,
+                    SortBy::Expiry => SortBy::Time,
                     SortBy::Time => SortBy::Profit,
                 };
                 app.update_filtered();
+            }
+            KeyCode::Char('e') => {
+                app.expiry_filter = app.expiry_filter.next();
+                app.update_filtered();
+                app.table_state.select(if app.filtered.is_empty() {
+                    None
+                } else {
+                    Some(0)
+                });
             }
             _ => {}
         },
@@ -666,6 +732,14 @@ fn draw_list(f: &mut Frame, app: &mut App) {
         )),
         Cell::from("Risk"),
         Cell::from(format!(
+            "Expiry{}",
+            if matches!(app.sort_by, SortBy::Expiry) {
+                " \u{2193}"
+            } else {
+                ""
+            }
+        )),
+        Cell::from(format!(
             "Time{}",
             if matches!(app.sort_by, SortBy::Time) {
                 " \u{2193}"
@@ -698,6 +772,14 @@ fn draw_list(f: &mut Frame, app: &mut App) {
             let time_str = chrono::DateTime::from_timestamp(opp.detected_at, 0)
                 .map(|dt| dt.format("%H:%M:%S").to_string())
                 .unwrap_or_default();
+            let expiry_str = opp
+                .expiry_timestamp
+                .and_then(|ms| chrono::DateTime::from_timestamp_millis(ms))
+                .map(|dt| {
+                    let days = (dt - chrono::Utc::now()).num_days();
+                    format!("{}d {}", days, dt.format("%m/%d"))
+                })
+                .unwrap_or_else(|| "\u{2014}".to_string());
 
             let risk_style = match opp.risk_level {
                 RiskLevel::Low => Style::default().fg(Color::Green),
@@ -710,6 +792,7 @@ fn draw_list(f: &mut Frame, app: &mut App) {
                 Cell::from(profit_str),
                 Cell::from(apy_str),
                 Cell::from(opp.risk_level.to_string()).style(risk_style),
+                Cell::from(expiry_str),
                 Cell::from(time_str),
             ])
         })
@@ -719,10 +802,11 @@ fn draw_list(f: &mut Frame, app: &mut App) {
         rows,
         [
             Constraint::Length(16),
-            Constraint::Min(25),
+            Constraint::Min(20),
             Constraint::Length(12),
             Constraint::Length(10),
             Constraint::Length(8),
+            Constraint::Length(10),
             Constraint::Length(10),
         ],
     )
@@ -733,9 +817,15 @@ fn draw_list(f: &mut Frame, app: &mut App) {
     f.render_stateful_widget(table, chunks[2], &mut app.table_state);
 
     // Footer
-    let footer = Paragraph::new(
-        " \u{2191}\u{2193}/jk Navigate | Enter Detail | 1-9/0 Filter | s Sort | l Leverage | q Quit",
-    )
+    let expiry_hint = if app.expiry_filter != ExpiryFilter::All {
+        format!(" [{}]", app.expiry_filter.label())
+    } else {
+        String::new()
+    };
+    let footer = Paragraph::new(format!(
+        " \u{2191}\u{2193}/jk Navigate | Enter Detail | 1-9/0 Filter | s Sort | e Expiry{} | l Leverage | q Quit",
+        expiry_hint,
+    ))
     .style(Style::default().fg(Color::DarkGray));
     f.render_widget(footer, chunks[3]);
 }

@@ -8,6 +8,7 @@ use deribit::analysis::calendar_arb::CalendarArbAnalyzer;
 use deribit::analysis::calendar_spread::CalendarSpreadAnalyzer;
 use deribit::analysis::conversion::ConversionAnalyzer;
 use deribit::analysis::put_call_parity::PutCallParityAnalyzer;
+use deribit::analysis::short_call_yield::ShortCallYieldAnalyzer;
 use deribit::analysis::short_put_yield::ShortPutYieldAnalyzer;
 use deribit::analysis::vertical_arb::VerticalArbAnalyzer;
 use deribit::analysis::vol_surface::VolSurfaceAnalyzer;
@@ -133,6 +134,7 @@ async fn main() -> Result<()> {
         let vol_surface = VolSurfaceAnalyzer::new(15.0);
         let calendar_spread = CalendarSpreadAnalyzer::new(10.0);
         let short_put_yield = ShortPutYieldAnalyzer::new();
+        let short_call_yield = ShortCallYieldAnalyzer::new();
 
         tokio::time::sleep(Duration::from_secs(30)).await;
         info!("Starting arbitrage scanning...");
@@ -183,6 +185,11 @@ async fn main() -> Result<()> {
                 signal_count += 1;
             }
             for opp in short_put_yield.scan(&analysis_short_put_registry, tc).await {
+                let _ = analysis_opp_tx.send(opp.clone());
+                analysis_event_bus.publish(Event::OpportunityFound(opp));
+                signal_count += 1;
+            }
+            for opp in short_call_yield.scan(&analysis_short_put_registry, tc).await {
                 let _ = analysis_opp_tx.send(opp.clone());
                 analysis_event_bus.publish(Event::OpportunityFound(opp));
                 signal_count += 1;

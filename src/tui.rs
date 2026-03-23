@@ -50,6 +50,7 @@ enum Filter {
     Calendar,
     Vol,
     ShortPut,
+    ShortCall,
     Portfolio,
 }
 
@@ -214,7 +215,7 @@ impl App {
             return;
         };
 
-        if opp.strategy_type != "short_put_yield" {
+        if opp.strategy_type != "short_put_yield" && opp.strategy_type != "short_call_yield" {
             self.pending_history_key = None;
             return;
         }
@@ -316,6 +317,7 @@ impl App {
                             "vol_surface_anomaly" | "butterfly_spread"
                         ),
                         Filter::ShortPut => opp.strategy_type == "short_put_yield",
+                        Filter::ShortCall => opp.strategy_type == "short_call_yield",
                         Filter::Portfolio => unreachable!(),
                     };
                     type_match && self.expiry_filter.matches(opp.expiry_timestamp)
@@ -538,10 +540,7 @@ fn handle_key(app: &mut App, key: event::KeyEvent) {
                     '7' => Filter::Calendar,
                     '8' => Filter::Vol,
                     '9' => Filter::ShortPut,
-                    '0' => {
-                        app.recompute_portfolios();
-                        Filter::Portfolio
-                    }
+                    '0' => Filter::ShortCall,
                     _ => unreachable!(),
                 };
                 app.update_filtered();
@@ -564,6 +563,16 @@ fn handle_key(app: &mut App, key: event::KeyEvent) {
                     SortBy::Time => SortBy::Profit,
                 };
                 app.update_filtered();
+            }
+            KeyCode::Char('p') => {
+                app.recompute_portfolios();
+                app.filter = Filter::Portfolio;
+                app.update_filtered();
+                app.table_state.select(if app.filtered.is_empty() {
+                    None
+                } else {
+                    Some(0)
+                });
             }
             KeyCode::Char('e') => {
                 app.expiry_filter = app.expiry_filter.next();
@@ -678,6 +687,10 @@ fn draw_list(f: &mut Frame, app: &mut App) {
         .iter()
         .filter(|o| o.strategy_type == "short_put_yield")
         .count();
+    let short_call_count = active
+        .iter()
+        .filter(|o| o.strategy_type == "short_call_yield")
+        .count();
     let tabs = Tabs::new(vec![
         format!("All [{}]", active.len()),
         format!("Arb [{}]", arb_count),
@@ -688,6 +701,7 @@ fn draw_list(f: &mut Frame, app: &mut App) {
         format!("Cal [{}]", cal_count),
         format!("Vol [{}]", vol_count),
         format!("PUT [{}]", short_put_count),
+        format!("CALL [{}]", short_call_count),
         format!("Port [{}]", app.portfolios.len()),
     ])
     .block(Block::bordered())
@@ -701,7 +715,8 @@ fn draw_list(f: &mut Frame, app: &mut App) {
         Filter::Calendar => 6,
         Filter::Vol => 7,
         Filter::ShortPut => 8,
-        Filter::Portfolio => 9,
+        Filter::ShortCall => 9,
+        Filter::Portfolio => 10,
     })
     .highlight_style(
         Style::default()
@@ -823,7 +838,7 @@ fn draw_list(f: &mut Frame, app: &mut App) {
         String::new()
     };
     let footer = Paragraph::new(format!(
-        " \u{2191}\u{2193}/jk Navigate | Enter Detail | 1-9/0 Filter | s Sort | e Expiry{} | l Leverage | q Quit",
+        " \u{2191}\u{2193}/jk Navigate | Enter Detail | 1-0 Filter | p Port | s Sort | e Expiry{} | l Leverage | q Quit",
         expiry_hint,
     ))
     .style(Style::default().fg(Color::DarkGray));
@@ -995,9 +1010,9 @@ fn draw_detail(f: &mut Frame, app: &mut App) {
 }
 
 fn draw_short_put_history_block(f: &mut Frame, area: Rect, app: &App, opp: &Opportunity) {
-    if opp.strategy_type != "short_put_yield" {
+    if opp.strategy_type != "short_put_yield" && opp.strategy_type != "short_call_yield" {
         let widget =
-            Paragraph::new(" History chart is only available for short put opportunities.")
+            Paragraph::new(" History chart is only available for short put/call opportunities.")
                 .block(Block::bordered().title(" Approx APY History "));
         f.render_widget(widget, area);
         return;

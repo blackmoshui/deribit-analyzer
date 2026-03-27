@@ -189,7 +189,10 @@ async fn main() -> Result<()> {
                 analysis_event_bus.publish(Event::OpportunityFound(opp));
                 signal_count += 1;
             }
-            for opp in short_call_yield.scan(&analysis_short_put_registry, tc).await {
+            for opp in short_call_yield
+                .scan(&analysis_short_put_registry, tc)
+                .await
+            {
                 let _ = analysis_opp_tx.send(opp.clone());
                 analysis_event_bus.publish(Event::OpportunityFound(opp));
                 signal_count += 1;

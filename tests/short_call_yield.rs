@@ -59,8 +59,8 @@ async fn generates_short_call_yield_opportunity_with_annualized_return() {
 
     assert_eq!(opp.strategy_type, "short_call_yield");
     assert_eq!(opp.instruments, vec!["BTC-30APR26-100000-C"]);
-    // premium = 0.05 BTC * 80000 = $4000
-    approx_eq(opp.expected_profit, 4000.0, 1e-6);
+    // premium = 0.05 BTC * 80000 = $4000, fee = 0.0003 BTC * 80000 = $24
+    approx_eq(opp.expected_profit, 3976.0, 1e-6);
     approx_eq(opp.total_cost, 100000.0, 1e-6);
     assert!(opp.description.starts_with("2026-"));
     assert!(opp.description.contains("SCALL"));
@@ -68,7 +68,7 @@ async fn generates_short_call_yield_opportunity_with_annualized_return() {
     let annualized_return = opp.annualized_return().unwrap();
     approx_eq(
         annualized_return,
-        (4000.0 / 100000.0) * (365.0 / 30.0),
+        (3976.0 / 100000.0) * (365.0 / 30.0),
         0.02,
     );
 }
@@ -167,13 +167,13 @@ async fn generates_short_call_yield_for_btc_usdc_options_without_btc_conversion(
     let opp = &opportunities[0];
 
     assert_eq!(opp.instruments, vec!["BTC_USDC-30APR26-100000-C"]);
-    approx_eq(opp.expected_profit, 2_500.0, 1e-6);
+    approx_eq(opp.expected_profit, 2_476.0, 1e-6);
     approx_eq(opp.total_cost, 100_000.0, 1e-6);
     assert!(matches!(opp.legs[0].price_unit, PriceUnit::Usdc));
     let annualized_return = opp.annualized_return().unwrap();
     approx_eq(
         annualized_return,
-        (2_500.0 / 100_000.0) * (365.0 / 30.0),
+        (2_476.0 / 100_000.0) * (365.0 / 30.0),
         0.02,
     );
 }

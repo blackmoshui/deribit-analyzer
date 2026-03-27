@@ -187,6 +187,26 @@ pub fn option_premium_usd(
     })
 }
 
+pub fn option_fee_usd(
+    instrument_name: &str,
+    option_price: f64,
+    underlying_price: f64,
+    amount: f64,
+) -> Option<f64> {
+    if option_price <= 0.0 || underlying_price <= 0.0 || amount <= 0.0 {
+        return None;
+    }
+
+    Some(match option_price_currency(instrument_name) {
+        OptionPriceCurrency::BaseAsset => {
+            f64::min(0.0003, 0.125 * option_price) * amount * underlying_price
+        }
+        OptionPriceCurrency::QuoteCurrency => {
+            f64::min(0.0003 * underlying_price, 0.125 * option_price) * amount
+        }
+    })
+}
+
 pub fn option_index_name(instrument_name: &str) -> Option<String> {
     let base = instrument_name.split('-').next()?;
     if base.contains('_') {

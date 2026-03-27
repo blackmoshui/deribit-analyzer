@@ -2,7 +2,8 @@ use tracing::info;
 
 use crate::analysis::opportunity::{Opportunity, RiskLevel, TradeLeg};
 use crate::market::instruments::{
-    option_premium_usd, option_price_currency, InstrumentRegistry, OptionPriceCurrency, OptionType,
+    option_fee_usd, option_premium_usd, option_price_currency, InstrumentRegistry,
+    OptionPriceCurrency, OptionType,
 };
 use crate::market::ticker::TickerCache;
 
@@ -62,16 +63,28 @@ impl ShortPutYieldAnalyzer {
                 continue;
             }
 
+            let Some(fee_usd) = option_fee_usd(
+                &inst.instrument_name,
+                best_bid_price,
+                ticker.underlying_price,
+                1.0,
+            ) else {
+                continue;
+            };
+            let net_premium_usd = premium_usd - fee_usd;
+
             let expiry_label = chrono::DateTime::from_timestamp_millis(inst.expiration_timestamp)
                 .map(|dt| dt.format("%Y-%m-%d").to_string())
                 .unwrap_or_else(|| "unknown".to_string());
-            let annualized = (premium_usd / inst.strike) * 365.0
+            let annualized = (net_premium_usd / inst.strike) * 365.0
                 / ((inst.expiration_timestamp - now * 1000) as f64 / 86_400_000.0);
 
             info!(
                 instrument = %inst.instrument_name,
                 strike = inst.strike,
                 premium_usd = premium_usd,
+                fee_usd = fee_usd,
+                net_premium_usd = net_premium_usd,
                 annualized = annualized,
                 "Short put yield detected"
             );
@@ -95,7 +108,7 @@ impl ShortPutYieldAnalyzer {
                     annualized * 100.0,
                 ),
                 legs: vec![leg],
-                expected_profit: premium_usd,
+                expected_profit: net_premium_usd,
                 total_cost: inst.strike,
                 risk_level: RiskLevel::High,
                 instruments: vec![inst.instrument_name.clone()],

@@ -7,12 +7,16 @@ use axum::{
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
+
+use deribit::analysis::short_put_history::HistoryResolution;
+use deribit::analysis::short_put_history_service::{ShortPutHistoryRequest, ShortPutHistoryService};
 use deribit::config::Config;
 use deribit::storage::sqlite::Storage;
 
 #[derive(Clone)]
 struct AppState {
     storage: Storage,
+    history_service: ShortPutHistoryService,
 }
 
 #[derive(Serialize)]
@@ -50,6 +54,8 @@ struct StatsResponse {
 #[derive(Deserialize)]
 struct HistoryQuery {
     instrument: String,
+    strike: f64,
+    expiry: i64, // expiry timestamp in ms
     resolution: Option<String>, // "15m" or "1h"
 }
 
@@ -66,6 +72,7 @@ struct HistoryPoint {
 struct HistoryResponse {
     points: Vec<HistoryPoint>,
     resolution: String,
+    status: String,
 }
 
 #[tokio::main]
@@ -79,8 +86,12 @@ async fn main() -> Result<()> {
 
     let config = Config::from_env()?;
     let storage = Storage::new(&config.db_path).await?;
+    let history_service = ShortPutHistoryService::new(storage.clone(), config.ws_url);
 
-    let state = AppState { storage };
+    let state = AppState {
+        storage,
+        history_service,
+    };
 
     let bind = std::env::var("WEB_BIND").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
 
@@ -104,7 +115,7 @@ async fn index_handler() -> impl IntoResponse {
 
 #[derive(Deserialize)]
 struct OppsQuery {
-    /// Max age in seconds; 0 = no filter (default: 0)
+    /// Max age in seconds (default: 120, 0 = no filter)
     max_age: Option<i64>,
 }
 
@@ -119,7 +130,7 @@ async fn opportunities_handler(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let now = chrono::Utc::now().timestamp();
-    let max_age = params.max_age.unwrap_or(0);
+    let max_age = params.max_age.unwrap_or(120);
     let results: Vec<ApiOpportunity> = entries
         .into_iter()
         .filter(|(_, opp)| max_age == 0 || now - opp.detected_at < max_age)
@@ -170,13 +181,17 @@ async fn stats_handler(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
+    let now = chrono::Utc::now().timestamp();
     let entries = state
         .storage
         .load_opportunities_after(0)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let opportunity_count = entries.len();
+    let opportunity_count = entries
+        .iter()
+        .filter(|(_, opp)| now - opp.detected_at < 120)
+        .count();
 
     Ok(Json(StatsResponse {
         instrument_count,
@@ -188,35 +203,48 @@ async fn history_handler(
     State(state): State<AppState>,
     Query(params): Query<HistoryQuery>,
 ) -> Result<Json<HistoryResponse>, StatusCode> {
-    use deribit::analysis::short_put_history::HistoryResolution;
-
     let resolution = match params.resolution.as_deref() {
         Some("1h") => HistoryResolution::OneHour,
         _ => HistoryResolution::FifteenMinutes,
     };
 
-    let now_ms = chrono::Utc::now().timestamp_millis();
-    let start_ms = now_ms - resolution.lookback_ms();
+    let cache_key = format!("{}:{}:{}", params.instrument, params.expiry, resolution.label());
+    let request = ShortPutHistoryRequest {
+        cache_key,
+        instrument_name: params.instrument,
+        strike: params.strike,
+        expiry_timestamp_ms: params.expiry,
+        resolution,
+    };
 
-    let points = state
-        .storage
-        .load_short_put_history_points(&params.instrument, resolution, start_ms, now_ms)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    match state.history_service.load_history(&request).await {
+        Ok(history) => {
+            let api_points: Vec<HistoryPoint> = history
+                .points
+                .into_iter()
+                .map(|p| HistoryPoint {
+                    timestamp: p.bucket_start_ms,
+                    apy: p.annualized_return,
+                    premium_usd: p.premium_usd,
+                    underlying_price: p.underlying_price,
+                    trade_count: p.trade_count,
+                })
+                .collect();
 
-    let api_points: Vec<HistoryPoint> = points
-        .into_iter()
-        .map(|p| HistoryPoint {
-            timestamp: p.bucket_start_ms,
-            apy: p.annualized_return,
-            premium_usd: p.premium_usd,
-            underlying_price: p.underlying_price,
-            trade_count: p.trade_count,
-        })
-        .collect();
-
-    Ok(Json(HistoryResponse {
-        points: api_points,
-        resolution: resolution.label().to_string(),
-    }))
+            Ok(Json(HistoryResponse {
+                points: api_points,
+                resolution: resolution.label().to_string(),
+                status: history.status,
+            }))
+        }
+        Err(e) => {
+            tracing::warn!("History load failed for {}: {}", request.instrument_name, e);
+            // Return empty with error status instead of 500
+            Ok(Json(HistoryResponse {
+                points: vec![],
+                resolution: resolution.label().to_string(),
+                status: format!("error: {}", e),
+            }))
+        }
+    }
 }

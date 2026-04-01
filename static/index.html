@@ -734,6 +734,7 @@ function showDetail(id) {
       <div class="chart-canvas-wrap">
         <canvas id="historyCanvas"></canvas>
       </div>
+      <div id="historyStatus" style="font-size:11px;color:var(--text-muted);margin-top:4px"></div>
     </div>` : ''}
 
     <div class="detail-section">
@@ -815,18 +816,28 @@ function showDetail(id) {
 // --- History chart ---
 async function loadHistory(opp) {
   const instrument = opp.instruments[0];
-  if (!instrument) return;
+  if (!instrument || !opp.expiry_timestamp) return;
+
+  // total_cost is the strike for short put/call yield strategies
+  const strike = opp.total_cost;
+  const expiry = opp.expiry_timestamp;
 
   try {
-    const res = await fetch(`/api/history?instrument=${encodeURIComponent(instrument)}&resolution=${historyResolution}`);
+    const params = new URLSearchParams({
+      instrument,
+      strike: strike.toString(),
+      expiry: expiry.toString(),
+      resolution: historyResolution,
+    });
+    const res = await fetch(`/api/history?${params}`);
     const data = await res.json();
-    renderChart(data.points, data.resolution);
+    renderChart(data.points, data.resolution, data.status);
   } catch (e) {
     console.error('History load failed:', e);
   }
 }
 
-function renderChart(points, resolution) {
+function renderChart(points, resolution, status) {
   const canvas = document.getElementById('historyCanvas');
   if (!canvas) return;
 
@@ -835,13 +846,17 @@ function renderChart(points, resolution) {
     historyChart = null;
   }
 
+  // Show status label if available
+  const statusEl = document.getElementById('historyStatus');
+  if (statusEl) statusEl.textContent = status || '';
+
   if (points.length === 0) {
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = '#6e7681';
     ctx.font = '13px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('No history data available', canvas.width/2, canvas.height/2);
+    ctx.fillText(status && status.startsWith('error') ? status : 'Loading history...', canvas.width/2, canvas.height/2);
     return;
   }
 

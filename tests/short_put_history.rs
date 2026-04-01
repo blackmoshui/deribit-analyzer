@@ -41,12 +41,14 @@ fn aggregates_last_trade_per_bucket_for_short_put_history() {
     let points = aggregate_history_points(
         60_000.0,
         expiry_ms,
-        HistoryResolution::FifteenMinutes,
+        HistoryResolution::OneHour,
         &trades,
     );
 
     assert_eq!(points.len(), 1);
-    assert_eq!(points[0].bucket_start_ms, base_ms);
+    // 1h bucket: floor(base_ms / 3_600_000) * 3_600_000
+    let expected_bucket = (base_ms / 3_600_000) * 3_600_000;
+    assert_eq!(points[0].bucket_start_ms, expected_bucket);
     approx_eq(points[0].option_price, 0.045, 1e-9);
     approx_eq(points[0].underlying_price, 81_000.0, 1e-9);
     approx_eq(points[0].premium_usd, 3_645.0, 1e-6);
@@ -85,24 +87,24 @@ fn skips_buckets_that_violate_live_short_put_filters() {
 #[test]
 fn history_resolutions_use_expected_lookback_windows() {
     assert_eq!(
-        HistoryResolution::FifteenMinutes.lookback_ms(),
-        24 * 60 * 60 * 1000
+        HistoryResolution::OneHour.lookback_ms(),
+        7 * 24 * 60 * 60 * 1000
     );
     assert_eq!(
-        HistoryResolution::OneHour.lookback_ms(),
-        30 * 24 * 60 * 60 * 1000
+        HistoryResolution::FourHours.lookback_ms(),
+        90 * 24 * 60 * 60 * 1000
     );
 }
 
 #[test]
 fn index_chart_range_matches_history_resolution() {
     assert_eq!(
-        index_chart_range_for_resolution(HistoryResolution::FifteenMinutes),
-        "1d"
-    );
-    assert_eq!(
         index_chart_range_for_resolution(HistoryResolution::OneHour),
         "1m"
+    );
+    assert_eq!(
+        index_chart_range_for_resolution(HistoryResolution::FourHours),
+        "all"
     );
 }
 
@@ -179,19 +181,19 @@ fn builds_history_points_for_btc_usdc_candles_without_btc_repricing() {
 }
 
 #[test]
-fn short_cache_window_is_not_treated_as_full_30d_cover() {
+fn short_cache_window_is_not_treated_as_full_90d_cover() {
     let start_ms = 1_700_000_000_000;
-    let end_ms = start_ms + HistoryResolution::OneHour.lookback_ms();
-    let latest_completed_bucket = ((end_ms / HistoryResolution::OneHour.bucket_ms())
-        * HistoryResolution::OneHour.bucket_ms())
-        - HistoryResolution::OneHour.bucket_ms();
+    let end_ms = start_ms + HistoryResolution::FourHours.lookback_ms();
+    let latest_completed_bucket = ((end_ms / HistoryResolution::FourHours.bucket_ms())
+        * HistoryResolution::FourHours.bucket_ms())
+        - HistoryResolution::FourHours.bucket_ms();
 
     assert!(!cache_covers_requested_window(
         Some(end_ms - 24 * 60 * 60 * 1000),
         Some(latest_completed_bucket),
         start_ms,
         latest_completed_bucket,
-        HistoryResolution::OneHour
+        HistoryResolution::FourHours
     ));
 }
 
@@ -222,7 +224,7 @@ async fn stores_and_loads_short_put_history_points_from_cache() {
     storage
         .save_short_put_history_points(
             "BTC-30APR26-60000-P",
-            HistoryResolution::FifteenMinutes,
+            HistoryResolution::OneHour,
             &points,
         )
         .await
@@ -231,7 +233,7 @@ async fn stores_and_loads_short_put_history_points_from_cache() {
     let loaded = storage
         .load_short_put_history_points(
             "BTC-30APR26-60000-P",
-            HistoryResolution::FifteenMinutes,
+            HistoryResolution::OneHour,
             1_700_000_000_000,
             1_700_000_120_000,
         )
@@ -326,14 +328,14 @@ async fn replacing_a_history_window_removes_stale_cached_rows() {
 #[test]
 fn incomplete_cache_restarts_fetch_from_requested_start() {
     let requested_start_ms = 1_700_000_000_000;
-    let latest_completed_bucket_ms = requested_start_ms + HistoryResolution::OneHour.lookback_ms();
+    let latest_completed_bucket_ms = requested_start_ms + HistoryResolution::FourHours.lookback_ms();
 
     assert_eq!(
         compute_fetch_start_ms(
             Some(requested_start_ms + 24 * 60 * 60 * 1000),
             requested_start_ms,
             latest_completed_bucket_ms,
-            HistoryResolution::OneHour,
+            HistoryResolution::FourHours,
         ),
         requested_start_ms
     );

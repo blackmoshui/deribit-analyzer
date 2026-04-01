@@ -484,7 +484,7 @@ let currentSort = 'profit';
 let currentFilter = 'all';
 let currentExpiry = 'all';
 let historyChart = null;
-let historyResolution = '15m';
+let historyResolution = '1h';
 
 // --- Filter definitions (matching TUI) ---
 const FILTERS = [
@@ -727,8 +727,8 @@ function showDetail(id) {
       <div class="chart-header">
         <span class="detail-section-title" style="margin:0">APY History</span>
         <div class="chart-res-btns">
-          <button class="chart-res-btn ${historyResolution==='15m'?'active':''}" data-res="15m">15m</button>
-          <button class="chart-res-btn ${historyResolution==='1h'?'active':''}" data-res="1h">1h</button>
+          <button class="chart-res-btn ${historyResolution==='1h'?'active':''}" data-res="1h">1h (7d)</button>
+          <button class="chart-res-btn ${historyResolution==='4h'?'active':''}" data-res="4h">4h (90d)</button>
         </div>
       </div>
       <div class="chart-canvas-wrap">

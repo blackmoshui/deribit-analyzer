@@ -589,11 +589,11 @@ fn handle_key(app: &mut App, key: event::KeyEvent) {
             KeyCode::Esc | KeyCode::Backspace => app.view = View::List,
             KeyCode::Char('q') => app.should_quit = true,
             KeyCode::Char('1') => {
-                app.detail_resolution = HistoryResolution::FifteenMinutes;
+                app.detail_resolution = HistoryResolution::OneHour;
                 app.request_history_for_current_selection();
             }
-            KeyCode::Char('5') => {
-                app.detail_resolution = HistoryResolution::OneHour;
+            KeyCode::Char('4') => {
+                app.detail_resolution = HistoryResolution::FourHours;
                 app.request_history_for_current_selection();
             }
             _ => {}
@@ -1004,7 +1004,7 @@ fn draw_detail(f: &mut Frame, app: &mut App) {
     f.render_widget(profit_block, chunks[4]);
 
     // Footer
-    let footer = Paragraph::new(" 1 15m | 5 1h | Esc Back | q Quit")
+    let footer = Paragraph::new(" 1 1h | 4 4h | Esc Back | q Quit")
         .style(Style::default().fg(Color::DarkGray));
     f.render_widget(footer, chunks[5]);
 }

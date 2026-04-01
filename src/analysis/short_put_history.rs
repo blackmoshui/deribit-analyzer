@@ -5,44 +5,44 @@ use crate::market::instruments::OptionPriceCurrency;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum HistoryResolution {
-    FifteenMinutes,
     OneHour,
+    FourHours,
 }
 
 impl HistoryResolution {
     pub fn api_resolution(self) -> i64 {
         match self {
-            HistoryResolution::FifteenMinutes => 15,
             HistoryResolution::OneHour => 60,
+            HistoryResolution::FourHours => 180, // 3h candles (closest supported)
         }
     }
 
     pub fn bucket_ms(self) -> i64 {
         match self {
-            HistoryResolution::FifteenMinutes => 900_000,
             HistoryResolution::OneHour => 3_600_000,
+            HistoryResolution::FourHours => 14_400_000,
         }
     }
 
     pub fn label(self) -> &'static str {
         match self {
-            HistoryResolution::FifteenMinutes => "15m",
             HistoryResolution::OneHour => "1h",
+            HistoryResolution::FourHours => "4h",
         }
     }
 
     pub fn lookback_ms(self) -> i64 {
         match self {
-            HistoryResolution::FifteenMinutes => 24 * 60 * 60 * 1000,
-            HistoryResolution::OneHour => 30 * 24 * 60 * 60 * 1000,
+            HistoryResolution::OneHour => 7 * 24 * 60 * 60 * 1000,      // 7 days
+            HistoryResolution::FourHours => 90 * 24 * 60 * 60 * 1000,   // 90 days
         }
     }
 
     pub fn cache_key(self) -> i64 {
         match self {
-            // Versioned keys to invalidate the older trade-based cache layout.
-            HistoryResolution::FifteenMinutes => 1015,
-            HistoryResolution::OneHour => 1060,
+            // Versioned keys — new values to invalidate old 15m/1h cache entries.
+            HistoryResolution::OneHour => 2060,
+            HistoryResolution::FourHours => 2180,
         }
     }
 }

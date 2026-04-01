@@ -267,9 +267,10 @@ pub fn compute_fetch_start_ms(
 }
 
 pub fn index_chart_range_for_resolution(resolution: HistoryResolution) -> &'static str {
+    // Valid Deribit ranges: 1h, 1d, 2d, 1m, 1y, all
     match resolution {
-        HistoryResolution::FifteenMinutes => "1d",
-        HistoryResolution::OneHour => "1m",
+        HistoryResolution::OneHour => "1m",    // 1 month covers 7d lookback
+        HistoryResolution::FourHours => "all",  // covers 90d lookback
     }
 }
 
@@ -321,8 +322,8 @@ fn parse_index_points(result: &serde_json::Value) -> Result<Vec<IndexPricePoint>
 
 fn lookback_label(resolution: HistoryResolution) -> &'static str {
     match resolution {
-        HistoryResolution::FifteenMinutes => "last 24h",
-        HistoryResolution::OneHour => "last 30d",
+        HistoryResolution::OneHour => "last 7d",
+        HistoryResolution::FourHours => "last 90d",
     }
 }
 

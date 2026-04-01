@@ -204,8 +204,8 @@ async fn history_handler(
     Query(params): Query<HistoryQuery>,
 ) -> Result<Json<HistoryResponse>, StatusCode> {
     let resolution = match params.resolution.as_deref() {
-        Some("1h") => HistoryResolution::OneHour,
-        _ => HistoryResolution::FifteenMinutes,
+        Some("4h") => HistoryResolution::FourHours,
+        _ => HistoryResolution::OneHour,
     };
 
     let cache_key = format!("{}:{}:{}", params.instrument, params.expiry, resolution.label());
@@ -217,7 +217,25 @@ async fn history_handler(
         resolution,
     };
 
-    match state.history_service.load_history(&request).await {
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        state.history_service.load_history(&request),
+    )
+    .await;
+
+    let result = match result {
+        Ok(inner) => inner,
+        Err(_) => {
+            tracing::warn!("History request timed out for {}", request.instrument_name);
+            return Ok(Json(HistoryResponse {
+                points: vec![],
+                resolution: resolution.label().to_string(),
+                status: "timeout: Deribit API took too long".to_string(),
+            }));
+        }
+    };
+
+    match result {
         Ok(history) => {
             let api_points: Vec<HistoryPoint> = history
                 .points

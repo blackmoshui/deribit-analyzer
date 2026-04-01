@@ -93,7 +93,7 @@ async fn main() -> Result<()> {
         history_service,
     };
 
-    let bind = std::env::var("WEB_BIND").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
+    let bind = std::env::var("WEB_BIND").unwrap_or_else(|_| "0.0.0.0:58432".to_string());
 
     let app = Router::new()
         .route("/", get(index_handler))

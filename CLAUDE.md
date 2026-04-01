@@ -8,6 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 cargo build                    # Build the project
 cargo run                      # Run main binary (real-time scanner)
 cargo run --bin monitor        # Run TUI monitor (reads from SQLite DB)
+cargo run --bin web            # Run web monitor (HTTP on 0.0.0.0:8080)
 cargo test                     # Run all tests
 cargo test --test short_put_yield  # Run a single integration test
 cargo clippy                   # Lint
@@ -24,6 +25,7 @@ Rust async application (tokio) for real-time BTC options arbitrage detection on 
 
 - **`main`** (`src/main.rs`): Connects to Deribit WebSocket API, subscribes to all BTC option tickers, runs analysis scanners every 10s, persists opportunities to SQLite.
 - **`monitor`** (`src/bin/monitor.rs`): Offline TUI (ratatui) that polls SQLite for opportunities and displays them. Includes short put APY history charting via candle data.
+- **`web`** (`src/bin/web.rs`): Web monitor (axum) serving a single-page dashboard at `http://0.0.0.0:8080`. Same features as TUI: filters, sorting, leverage, detail view, APY history charts. Bind address configurable via `WEB_BIND` env var.
 
 ### Data Flow
 

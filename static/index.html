@@ -1,0 +1,936 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Deribit Options Monitor</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+<style>
+:root {
+  --bg-primary: #0d1117;
+  --bg-secondary: #161b22;
+  --bg-tertiary: #21262d;
+  --bg-hover: #30363d;
+  --border: #30363d;
+  --text-primary: #e6edf3;
+  --text-secondary: #8b949e;
+  --text-muted: #6e7681;
+  --accent-blue: #58a6ff;
+  --accent-green: #3fb950;
+  --accent-yellow: #d29922;
+  --accent-red: #f85149;
+  --accent-purple: #bc8cff;
+  --accent-cyan: #39d2c0;
+  --accent-orange: #f0883e;
+  --font-mono: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  overflow-x: hidden;
+}
+
+/* Header */
+.header {
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.logo {
+  font-family: var(--font-mono);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--accent-cyan);
+  letter-spacing: -0.5px;
+}
+.status-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  padding: 4px 10px;
+  border-radius: 12px;
+}
+.status-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--accent-green);
+  animation: pulse 2s infinite;
+}
+.status-dot.offline { background: var(--text-muted); animation: none; }
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.leverage-btn {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  color: var(--accent-yellow);
+  padding: 4px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  transition: all 0.15s;
+}
+.leverage-btn:hover { border-color: var(--accent-yellow); }
+.sort-select {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.sort-select:focus { outline: none; border-color: var(--accent-blue); }
+
+/* Filter Tabs */
+.filter-bar {
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  padding: 0 24px;
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+}
+.filter-tab {
+  padding: 10px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.15s;
+  white-space: nowrap;
+  user-select: none;
+}
+.filter-tab:hover { color: var(--text-primary); }
+.filter-tab.active {
+  color: var(--accent-blue);
+  border-bottom-color: var(--accent-blue);
+}
+.filter-tab .count {
+  background: var(--bg-tertiary);
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-size: 11px;
+  margin-left: 4px;
+}
+.filter-tab.active .count {
+  background: rgba(88, 166, 255, 0.15);
+  color: var(--accent-blue);
+}
+
+/* Expiry filter */
+.expiry-bar {
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  padding: 6px 24px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.expiry-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.expiry-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  padding: 2px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.expiry-btn:hover { border-color: var(--text-secondary); }
+.expiry-btn.active {
+  background: var(--accent-blue);
+  border-color: var(--accent-blue);
+  color: #fff;
+}
+
+/* Main layout */
+.main {
+  display: flex;
+  height: calc(100vh - 130px);
+}
+.list-panel {
+  flex: 1;
+  overflow-y: auto;
+  min-width: 0;
+}
+.detail-panel {
+  width: 480px;
+  min-width: 480px;
+  background: var(--bg-secondary);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+  transition: width 0.2s;
+}
+.detail-panel.hidden { width: 0; min-width: 0; overflow: hidden; border: none; }
+
+/* Table */
+.opp-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.opp-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.opp-table th {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  user-select: none;
+  cursor: pointer;
+}
+.opp-table th:hover { color: var(--text-primary); }
+.opp-table th.sorted { color: var(--accent-blue); }
+.opp-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.opp-table tr {
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.opp-table tbody tr:hover { background: var(--bg-hover); }
+.opp-table tbody tr.selected { background: rgba(88, 166, 255, 0.08); }
+
+.strategy-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+}
+.strategy-badge.arb { background: rgba(188, 140, 255, 0.15); color: var(--accent-purple); }
+.strategy-badge.signal { background: rgba(57, 210, 192, 0.15); color: var(--accent-cyan); }
+
+.risk-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.risk-low { background: rgba(63, 185, 80, 0.15); color: var(--accent-green); }
+.risk-medium { background: rgba(210, 153, 34, 0.15); color: var(--accent-yellow); }
+.risk-high { background: rgba(248, 81, 73, 0.15); color: var(--accent-red); }
+
+.profit-positive { color: var(--accent-green); }
+.profit-negative { color: var(--accent-red); }
+.apy-value { color: var(--accent-cyan); font-weight: 600; }
+
+/* Detail panel */
+.detail-header {
+  padding: 20px;
+  border-bottom: 1px solid var(--border);
+}
+.detail-strategy {
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+.detail-desc {
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.detail-section {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.detail-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+.detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.detail-item label {
+  display: block;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+.detail-item value {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* Legs table */
+.legs-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.legs-table th {
+  color: var(--text-muted);
+  font-weight: 600;
+  text-align: left;
+  padding: 6px 8px;
+  font-size: 11px;
+  border-bottom: 1px solid var(--border);
+}
+.legs-table td {
+  padding: 6px 8px;
+  font-family: var(--font-mono);
+  border-bottom: 1px solid rgba(48, 54, 61, 0.5);
+}
+.action-buy { color: var(--accent-green); font-weight: 600; }
+.action-sell { color: var(--accent-red); font-weight: 600; }
+
+/* Chart */
+.chart-container {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.chart-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.chart-res-btns {
+  display: flex;
+  gap: 4px;
+}
+.chart-res-btn {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  padding: 2px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  font-family: var(--font-mono);
+}
+.chart-res-btn.active {
+  background: var(--accent-blue);
+  border-color: var(--accent-blue);
+  color: #fff;
+}
+.chart-canvas-wrap {
+  position: relative;
+  height: 200px;
+}
+
+/* Empty state */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 300px;
+  color: var(--text-muted);
+}
+.empty-state-icon { font-size: 48px; margin-bottom: 12px; opacity: 0.3; }
+.empty-state-text { font-size: 14px; }
+
+/* Detail placeholder */
+.detail-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-muted);
+  font-size: 13px;
+  gap: 8px;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--bg-tertiary); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--bg-hover); }
+
+/* Responsive */
+@media (max-width: 900px) {
+  .main { flex-direction: column; height: auto; }
+  .detail-panel { width: 100% !important; min-width: 0 !important; border-left: none; border-top: 1px solid var(--border); }
+  .detail-panel.hidden { display: none; }
+  .header { flex-wrap: wrap; gap: 8px; }
+}
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div class="header-left">
+    <div class="logo">DERIBIT MONITOR</div>
+    <div class="status-badge">
+      <span class="status-dot" id="statusDot"></span>
+      <span id="statusText">Connecting...</span>
+    </div>
+  </div>
+  <div class="header-right">
+    <button class="leverage-btn" id="leverageBtn" title="Cycle leverage">1x</button>
+    <select class="sort-select" id="sortSelect">
+      <option value="profit">Sort: Profit</option>
+      <option value="apy">Sort: APY</option>
+      <option value="expiry">Sort: Expiry</option>
+      <option value="time">Sort: Time</option>
+    </select>
+  </div>
+</div>
+
+<!-- Filter tabs -->
+<div class="filter-bar" id="filterBar"></div>
+
+<!-- Expiry filter -->
+<div class="expiry-bar">
+  <span class="expiry-label">Expiry:</span>
+  <button class="expiry-btn active" data-expiry="all">All</button>
+  <button class="expiry-btn" data-expiry="short">Short (&le;7d)</button>
+  <button class="expiry-btn" data-expiry="medium">Medium (7-30d)</button>
+  <button class="expiry-btn" data-expiry="long">Long (&gt;30d)</button>
+</div>
+
+<!-- Main layout -->
+<div class="main">
+  <div class="list-panel">
+    <table class="opp-table">
+      <thead>
+        <tr>
+          <th data-sort="strategy">Strategy</th>
+          <th data-sort="description">Description</th>
+          <th data-sort="profit">Profit</th>
+          <th data-sort="apy">APY</th>
+          <th data-sort="risk">Risk</th>
+          <th data-sort="expiry">Expiry</th>
+          <th data-sort="time">Time</th>
+        </tr>
+      </thead>
+      <tbody id="oppBody"></tbody>
+    </table>
+    <div class="empty-state" id="emptyState" style="display:none">
+      <div class="empty-state-icon">&#x1F50D;</div>
+      <div class="empty-state-text">Scanning for opportunities...</div>
+    </div>
+  </div>
+
+  <div class="detail-panel hidden" id="detailPanel">
+    <div id="detailContent">
+      <div class="detail-placeholder">
+        <div style="font-size:32px; opacity:0.3">&#x2190;</div>
+        <div>Select an opportunity</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// --- State ---
+let opportunities = [];
+let selectedId = null;
+let leverage = 1;
+const leverageOptions = [1, 2, 5, 10];
+let currentSort = 'profit';
+let currentFilter = 'all';
+let currentExpiry = 'all';
+let historyChart = null;
+let historyResolution = '15m';
+
+// --- Filter definitions (matching TUI) ---
+const FILTERS = [
+  { key: 'all', label: 'All', match: () => true },
+  { key: 'arb', label: 'Arbitrage', match: o => isArb(o.strategy_type) },
+  { key: 'signal', label: 'Signal', match: o => !isArb(o.strategy_type) },
+  { key: 'pcp', label: 'PCP', match: o => o.strategy_type === 'put_call_parity' },
+  { key: 'spread', label: 'Spread', match: o => ['vertical_arb','butterfly_arb','box_spread'].includes(o.strategy_type) },
+  { key: 'convrev', label: 'Conv/Rev', match: o => ['conversion','reversal'].includes(o.strategy_type) },
+  { key: 'calendar', label: 'Calendar', match: o => o.strategy_type.includes('calendar') },
+  { key: 'vol', label: 'Vol', match: o => ['vol_surface_anomaly','butterfly_spread'].includes(o.strategy_type) },
+  { key: 'shortput', label: 'Short Put', match: o => o.strategy_type === 'short_put_yield' },
+  { key: 'shortcall', label: 'Short Call', match: o => o.strategy_type === 'short_call_yield' },
+];
+
+const ARB_TYPES = ['put_call_parity','conversion','reversal','vertical_arb','butterfly_arb','box_spread','calendar_arb','calendar_spread'];
+function isArb(type) { return ARB_TYPES.includes(type); }
+
+// --- Init filters ---
+function initFilters() {
+  const bar = document.getElementById('filterBar');
+  FILTERS.forEach(f => {
+    const tab = document.createElement('div');
+    tab.className = 'filter-tab' + (f.key === 'all' ? ' active' : '');
+    tab.dataset.filter = f.key;
+    tab.innerHTML = `${f.label}<span class="count">0</span>`;
+    tab.onclick = () => {
+      currentFilter = f.key;
+      document.querySelectorAll('.filter-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      render();
+    };
+    bar.appendChild(tab);
+  });
+}
+
+// --- Expiry filter ---
+document.querySelectorAll('.expiry-btn').forEach(btn => {
+  btn.onclick = () => {
+    currentExpiry = btn.dataset.expiry;
+    document.querySelectorAll('.expiry-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    render();
+  };
+});
+
+// --- Leverage ---
+document.getElementById('leverageBtn').onclick = () => {
+  const idx = leverageOptions.indexOf(leverage);
+  leverage = leverageOptions[(idx + 1) % leverageOptions.length];
+  document.getElementById('leverageBtn').textContent = leverage + 'x';
+  render();
+};
+
+// --- Sort ---
+document.getElementById('sortSelect').onchange = (e) => {
+  currentSort = e.target.value;
+  render();
+};
+
+// Column header sort
+document.querySelectorAll('.opp-table th[data-sort]').forEach(th => {
+  th.onclick = () => {
+    currentSort = th.dataset.sort;
+    document.getElementById('sortSelect').value = currentSort;
+    render();
+  };
+});
+
+// --- Helpers ---
+function leveragedCost(opp) {
+  const base = Math.abs(opp.total_cost);
+  if (leverage <= 1) return base;
+  const futuresUsd = opp.legs
+    .filter(l => l.price_unit === 'USD')
+    .reduce((s, l) => s + l.price * l.amount, 0);
+  const optionCost = Math.max(base - futuresUsd, 0);
+  return optionCost + futuresUsd / leverage;
+}
+
+function leveragedApy(opp) {
+  if (opp.expected_profit <= 0) return null;
+  const cost = leveragedCost(opp);
+  if (cost < 1) return null;
+  if (!opp.expiry_timestamp) return null;
+  const detectedMs = opp.detected_at * 1000;
+  const days = (opp.expiry_timestamp - detectedMs) / 86400000;
+  if (days < 1) return null;
+  return (opp.expected_profit / cost) * 365 / days;
+}
+
+function daysToExpiry(opp) {
+  if (!opp.expiry_timestamp) return null;
+  const detectedMs = opp.detected_at * 1000;
+  return (opp.expiry_timestamp - detectedMs) / 86400000;
+}
+
+function formatProfit(v) {
+  return (v >= 0 ? '+' : '') + '$' + v.toFixed(2);
+}
+function formatApy(v) {
+  if (v == null) return '-';
+  return (v * 100).toFixed(1) + '%';
+}
+function formatExpiry(opp) {
+  const days = daysToExpiry(opp);
+  if (days == null) return '-';
+  const d = Math.round(days);
+  const date = new Date(opp.expiry_timestamp);
+  const mm = String(date.getUTCMonth()+1).padStart(2,'0');
+  const dd = String(date.getUTCDate()).padStart(2,'0');
+  return `${d}d ${mm}/${dd}`;
+}
+function formatTime(ts) {
+  const d = new Date(ts * 1000);
+  return d.toTimeString().slice(0,8);
+}
+function strategyLabel(type) {
+  return type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+// --- Filtering & Sorting ---
+function getFiltered() {
+  let list = [...opportunities];
+  const filterDef = FILTERS.find(f => f.key === currentFilter);
+  if (filterDef) list = list.filter(filterDef.match);
+
+  if (currentExpiry !== 'all') {
+    list = list.filter(o => {
+      const days = daysToExpiry(o);
+      if (days == null) return false;
+      if (currentExpiry === 'short') return days <= 7;
+      if (currentExpiry === 'medium') return days > 7 && days <= 30;
+      if (currentExpiry === 'long') return days > 30;
+      return true;
+    });
+  }
+
+  list.sort((a, b) => {
+    switch (currentSort) {
+      case 'profit': return b.expected_profit - a.expected_profit;
+      case 'apy': return (leveragedApy(b) || 0) - (leveragedApy(a) || 0);
+      case 'expiry': return (daysToExpiry(a) || 9999) - (daysToExpiry(b) || 9999);
+      case 'time': return b.detected_at - a.detected_at;
+      case 'strategy': return a.strategy_type.localeCompare(b.strategy_type);
+      case 'description': return a.description.localeCompare(b.description);
+      case 'risk': {
+        const order = { low: 0, medium: 1, high: 2 };
+        return (order[a.risk_level] || 0) - (order[b.risk_level] || 0);
+      }
+      default: return 0;
+    }
+  });
+
+  return list;
+}
+
+// --- Render ---
+function render() {
+  updateFilterCounts();
+  const filtered = getFiltered();
+  const tbody = document.getElementById('oppBody');
+  const empty = document.getElementById('emptyState');
+
+  // Update sort headers
+  document.querySelectorAll('.opp-table th').forEach(th => {
+    th.classList.toggle('sorted', th.dataset.sort === currentSort);
+  });
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = '';
+    empty.style.display = 'flex';
+    return;
+  }
+  empty.style.display = 'none';
+
+  tbody.innerHTML = filtered.map(o => {
+    const apy = leveragedApy(o);
+    const arbClass = isArb(o.strategy_type) ? 'arb' : 'signal';
+    const profitClass = o.expected_profit >= 0 ? 'profit-positive' : 'profit-negative';
+    const riskClass = `risk-${o.risk_level}`;
+    const selectedClass = o.id === selectedId ? 'selected' : '';
+    return `<tr class="${selectedClass}" data-id="${o.id}">
+      <td><span class="strategy-badge ${arbClass}">${strategyLabel(o.strategy_type)}</span></td>
+      <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;color:var(--text-secondary);font-family:var(--font-sans);font-size:12px" title="${o.description}">${o.description}</td>
+      <td class="${profitClass}">${formatProfit(o.expected_profit)}</td>
+      <td class="apy-value">${formatApy(apy)}</td>
+      <td><span class="risk-badge ${riskClass}">${o.risk_level}</span></td>
+      <td>${formatExpiry(o)}</td>
+      <td style="color:var(--text-muted)">${formatTime(o.detected_at)}</td>
+    </tr>`;
+  }).join('');
+
+  // Row click
+  tbody.querySelectorAll('tr').forEach(tr => {
+    tr.onclick = () => {
+      selectedId = parseInt(tr.dataset.id);
+      render();
+      showDetail(selectedId);
+    };
+  });
+}
+
+function updateFilterCounts() {
+  FILTERS.forEach(f => {
+    const count = opportunities.filter(f.match).length;
+    const tab = document.querySelector(`.filter-tab[data-filter="${f.key}"] .count`);
+    if (tab) tab.textContent = count;
+  });
+}
+
+// --- Detail ---
+function showDetail(id) {
+  const opp = opportunities.find(o => o.id === id);
+  const panel = document.getElementById('detailPanel');
+  const content = document.getElementById('detailContent');
+  if (!opp) {
+    panel.classList.add('hidden');
+    return;
+  }
+  panel.classList.remove('hidden');
+
+  const apy = leveragedApy(opp);
+  const cost = leveragedCost(opp);
+  const days = daysToExpiry(opp);
+  const arbClass = isArb(opp.strategy_type) ? 'arb' : 'signal';
+  const isYieldStrategy = opp.strategy_type.includes('short_put') || opp.strategy_type.includes('short_call');
+
+  content.innerHTML = `
+    <div class="detail-header">
+      <div class="detail-strategy">
+        <span class="strategy-badge ${arbClass}" style="font-size:13px">${strategyLabel(opp.strategy_type)}</span>
+        <span class="risk-badge risk-${opp.risk_level}" style="margin-left:8px">${opp.risk_level}</span>
+      </div>
+      <div class="detail-desc" style="margin-top:8px">${opp.description}</div>
+    </div>
+
+    ${isYieldStrategy ? `
+    <div class="chart-container">
+      <div class="chart-header">
+        <span class="detail-section-title" style="margin:0">APY History</span>
+        <div class="chart-res-btns">
+          <button class="chart-res-btn ${historyResolution==='15m'?'active':''}" data-res="15m">15m</button>
+          <button class="chart-res-btn ${historyResolution==='1h'?'active':''}" data-res="1h">1h</button>
+        </div>
+      </div>
+      <div class="chart-canvas-wrap">
+        <canvas id="historyCanvas"></canvas>
+      </div>
+    </div>` : ''}
+
+    <div class="detail-section">
+      <div class="detail-section-title">Execution Steps</div>
+      <table class="legs-table">
+        <thead><tr><th>#</th><th>Action</th><th>Instrument</th><th>Price</th><th>Amount</th></tr></thead>
+        <tbody>
+          ${opp.legs.map(l => `<tr>
+            <td style="color:var(--text-muted)">${l.step}</td>
+            <td class="${l.action === 'BUY' ? 'action-buy' : 'action-sell'}">${l.action}</td>
+            <td style="font-size:11px">${l.instrument}</td>
+            <td>${l.price.toFixed(l.price_unit === 'USD' ? 2 : 6)} ${l.price_unit}</td>
+            <td>${l.amount}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="detail-section">
+      <div class="detail-section-title">Profit Analysis</div>
+      <div class="detail-grid">
+        <div class="detail-item">
+          <label>Capital Cost</label>
+          <value style="color:var(--text-primary)">$${cost.toFixed(2)}</value>
+        </div>
+        <div class="detail-item">
+          <label>Expected Profit</label>
+          <value class="${opp.expected_profit >= 0 ? 'profit-positive' : 'profit-negative'}">${formatProfit(opp.expected_profit)}</value>
+        </div>
+        <div class="detail-item">
+          <label>ROI</label>
+          <value style="color:var(--accent-purple)">${cost > 0 ? ((opp.expected_profit/cost)*100).toFixed(2)+'%' : '-'}</value>
+        </div>
+        <div class="detail-item">
+          <label>APY (${leverage}x)</label>
+          <value class="apy-value">${formatApy(apy)}</value>
+        </div>
+        <div class="detail-item">
+          <label>Days to Expiry</label>
+          <value style="color:var(--text-primary)">${days != null ? days.toFixed(1) + 'd' : '-'}</value>
+        </div>
+        <div class="detail-item">
+          <label>Detected At</label>
+          <value style="color:var(--text-secondary)">${new Date(opp.detected_at*1000).toLocaleString()}</value>
+        </div>
+        <div class="detail-item">
+          <label>Leverage</label>
+          <value style="color:var(--accent-yellow)">${leverage}x</value>
+        </div>
+        <div class="detail-item">
+          <label>Instruments</label>
+          <value style="color:var(--text-secondary);font-size:11px">${opp.instruments.length}</value>
+        </div>
+      </div>
+    </div>
+
+    <div class="detail-section">
+      <div class="detail-section-title">Instruments</div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px">
+        ${opp.instruments.map(i => `<span style="background:var(--bg-tertiary);padding:2px 8px;border-radius:4px;font-family:var(--font-mono);font-size:11px">${i}</span>`).join('')}
+      </div>
+    </div>
+  `;
+
+  // Chart resolution buttons
+  if (isYieldStrategy) {
+    content.querySelectorAll('.chart-res-btn').forEach(btn => {
+      btn.onclick = () => {
+        historyResolution = btn.dataset.res;
+        content.querySelectorAll('.chart-res-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        loadHistory(opp);
+      };
+    });
+    loadHistory(opp);
+  }
+}
+
+// --- History chart ---
+async function loadHistory(opp) {
+  const instrument = opp.instruments[0];
+  if (!instrument) return;
+
+  try {
+    const res = await fetch(`/api/history?instrument=${encodeURIComponent(instrument)}&resolution=${historyResolution}`);
+    const data = await res.json();
+    renderChart(data.points, data.resolution);
+  } catch (e) {
+    console.error('History load failed:', e);
+  }
+}
+
+function renderChart(points, resolution) {
+  const canvas = document.getElementById('historyCanvas');
+  if (!canvas) return;
+
+  if (historyChart) {
+    historyChart.destroy();
+    historyChart = null;
+  }
+
+  if (points.length === 0) {
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#6e7681';
+    ctx.font = '13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('No history data available', canvas.width/2, canvas.height/2);
+    return;
+  }
+
+  historyChart = new Chart(canvas, {
+    type: 'line',
+    data: {
+      datasets: [{
+        label: 'APY',
+        data: points.map(p => ({ x: p.timestamp, y: p.apy * 100 })),
+        borderColor: '#39d2c0',
+        backgroundColor: 'rgba(57, 210, 192, 0.1)',
+        fill: true,
+        tension: 0.3,
+        pointRadius: 0,
+        pointHoverRadius: 4,
+        borderWidth: 2,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#21262d',
+          borderColor: '#30363d',
+          borderWidth: 1,
+          titleColor: '#e6edf3',
+          bodyColor: '#8b949e',
+          callbacks: {
+            title: (items) => new Date(items[0].parsed.x).toLocaleString(),
+            label: (item) => `APY: ${item.parsed.y.toFixed(1)}%`,
+          }
+        }
+      },
+      scales: {
+        x: {
+          type: 'time',
+          time: { unit: resolution === '15m' ? 'hour' : 'day' },
+          grid: { color: 'rgba(48,54,61,0.5)' },
+          ticks: { color: '#6e7681', maxTicksLimit: 8 },
+        },
+        y: {
+          grid: { color: 'rgba(48,54,61,0.5)' },
+          ticks: {
+            color: '#6e7681',
+            callback: v => v.toFixed(0) + '%',
+          },
+        }
+      }
+    }
+  });
+}
+
+// --- Polling ---
+async function poll() {
+  try {
+    const [oppsRes, statsRes] = await Promise.all([
+      fetch('/api/opportunities'),
+      fetch('/api/stats'),
+    ]);
+    const opps = await oppsRes.json();
+    const stats = await statsRes.json();
+
+    opportunities = opps;
+
+    // Update status
+    const dot = document.getElementById('statusDot');
+    const text = document.getElementById('statusText');
+    if (stats.instrument_count > 0) {
+      dot.classList.remove('offline');
+      text.textContent = `${stats.instrument_count} instruments | ${stats.opportunity_count} opportunities`;
+    } else {
+      dot.classList.add('offline');
+      text.textContent = 'No data';
+    }
+
+    render();
+  } catch (e) {
+    document.getElementById('statusDot').classList.add('offline');
+    document.getElementById('statusText').textContent = 'Connection error';
+  }
+}
+
+// --- Init ---
+initFilters();
+poll();
+setInterval(poll, 2000);
+</script>
+</body>
+</html>
